@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI-Staff V4 架构流程图</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d1117; color: #c9d1d9; font-family: 'Segoe UI', sans-serif; padding: 24px; }
+  h1 { text-align: center; color: #58a6ff; margin-bottom: 8px; font-size: 1.6em; }
+  .subtitle { text-align: center; color: #8b949e; margin-bottom: 24px; font-size: 0.9em; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1400px; margin: 0 auto; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+  .card h2 { color: #58a6ff; font-size: 1.1em; margin-bottom: 12px; border-bottom: 1px solid #30363d; padding-bottom: 8px; }
+  .full { grid-column: 1 / -1; }
+  .mermaid { display: flex; justify-content: center; }
+  .legend { display: flex; gap: 16px; justify-content: center; margin-bottom: 16px; flex-wrap: wrap; }
+  .legend span { font-size: 0.8em; padding: 2px 8px; border-radius: 4px; }
+  .tag-core { background: #1f6feb33; color: #58a6ff; }
+  .tag-agent { background: #3fb95033; color: #3fb950; }
+  .tag-backend { background: #f0883e33; color: #f0883e; }
+  .tag-expert { background: #bc8cff33; color: #bc8cff; }
+</style>
+</head>
+<body>
+<h1>🦞 AI-Staff V4 架构流程图</h1>
+<p class="subtitle">不忘初心：3行代码启动 → 自动分类 → 智能路由 → 质量闭环</p>
+
+<div class="legend">
+  <span class="tag-core">■ Core 基础设施</span>
+  <span class="tag-agent">■ Agent 协作层</span>
+  <span class="tag-backend">■ Backend 后端层</span>
+  <span class="tag-expert">■ Expert 专家层</span>
+</div>
+
+<div class="grid">
+
+<!-- 1. 总体架构 -->
+<div class="card full">
+<h2>📊 总体架构（分层调用关系）</h2>
+<div class="mermaid">
+graph TB
+    User["👤 用户输入"] --> Chat["chat() 统一入口"]
+    
+    Chat --> Classifier["TaskClassifier<br/>任务自动分类"]
+    Chat --> ForcedMode["_chat_forced_mode()<br/>指定模式路由"]
+    
+    Classifier -->|direct| Direct["⚡ 快速路径<br/>chat_single() 1次调用"]
+    Classifier -->|code| CodeMode["💻 Code模式<br/>编码 → 审查"]
+    Classifier -->|research| ResearchMode["🔬 Research模式<br/>多轮追问+上下文累积"]
+    Classifier -->|arena| ArenaMode["🏟️ Arena模式<br/>多模型并行横评"]
+    Classifier -->|complex| V5Loop["🔄 V5闭环<br/>CollaborationLoop"]
+    
+    ForcedMode --> Direct
+    ForcedMode --> CodeMode
+    ForcedMode --> ResearchMode
+    ForcedMode --> ArenaMode
+    
+    CodeMode --> Writer1["Writer(chat_single)"]
+    Writer1 --> Reviewer1["Reviewer(chat_single)"]
+    
+    ResearchMode --> R1["Round1: chat_single"]
+    R1 --> R2["Round2: +accumulated_context"]
+    R2 --> R3["Round3: +accumulated_context"]
+    
+    ArenaMode --> Parallel["ThreadPoolExecutor<br/>max_workers=6"]
+    Parallel --> B1["Backend1"]
+    Parallel --> B2["Backend2"]
+    Parallel --> B3["BackendN..."]
+    
+    V5Loop --> Writer2["Writer(快模型)"]
+    Writer2 --> Reviewer2["Reviewer(强模型)"]
+    Reviewer2 -->|score&lt;80| Rebuttal["Writer辩解"]
+    Rebuttal --> Rejudge["Reviewer重评"]
+    Rejudge -->|still&lt;80| Rewrite["Writer带反馈修正"]
+    Rewrite --> Reviewer2
+    Reviewer2 -->|score≥80| Done["✅ 返回结果"]
+    
+    style User fill:#1f6feb,color:#fff
+    style Chat fill:#238636,color:#fff
+    style Classifier fill:#8957e5,color:#fff
+    style V5Loop fill:#da3633,color:#fff
+    style Parallel fill:#f0883e,color:#fff
+</div>
+</div>
+
+<!-- 2. chat() 决策流程 -->
+<div class="card">
+<h2>🔀 chat() 决策流程</h2>
+<div class="mermaid">
+flowchart TD
+    Start(["chat(prompt, mode, ...)"]) --> HasMode{mode指定?}
+    HasMode -->|Yes| Forced["_chat_forced_mode()"]
+    HasMode -->|No/auto| Auto["auto_run_v5()"]
+    
+    Auto --> Classify["TaskClassifier.classify()"]
+    Classify --> Cat{分类结果}
+    Cat -->|direct| FastPath["快速路径<br/>chat_single()"]
+    Cat -->|code/research/<br/>arena/creative| V5["V5 CollabLoop"]
+    Cat -->|complex| V5
+    
+    Forced --> FM{mode类型}
+    FM -->|direct| FastPath
+    FM -->|code| CodeExec["_execute_code_task()"]
+    FM -->|research| ResExec["_execute_research()"]
+    FM -->|arena| ArenaExec["cross_arena()"]
+    FM -->|creative| V5
+    
+    FastPath --> Ret["返回 CollaborationResult"]
+    CodeExec --> Ret
+    ResExec --> Ret
+    ArenaExec --> Ret
+    V5 --> Ret
+    
+    style Start fill:#1f6feb,color:#fff
+    style FastPath fill:#238636,color:#fff
+    style V5 fill:#da3633,color:#fff
+</div>
+</div>
+
+<!-- 3. SmartInit 扫描流程 -->
+<div class="card">
+<h2>🔍 SmartInit 零配置扫描</h2>
+<div class="mermaid">
+flowchart TD
+    Start(["from_env()"]) --> ScanEnv["扫描环境变量<br/>GEMINI_API_KEY / OPENAI_API_KEY / ..."]
+    ScanEnv --> HasKey{找到Key?}
+    HasKey -->|No| Fail["❌ 无法启动"]
+    HasKey -->|Yes| SmartInit["SmartInit.discover()"]
+    
+    SmartInit --> ScanModels["_scan_gemini_models()<br/>GET /v1beta/models"]
+    ScanModels --> Filter["过滤: 移除lyria/tts/robotics<br/>Gemma限2个<br/>tier排序: free优先"]
+    Filter --> Probe["逐个探测延迟<br/>55s超时"]
+    Probe --> BuildReg["构建ModelRegistry<br/>best_overall / best_free"]
+    BuildReg --> Ready["✅ 可用！"]
+    
+    style Start fill:#1f6feb,color:#fff
+    style Ready fill:#238636,color:#fff
+    style Fail fill:#da3633,color:#fff
+</div>
+</div>
+
+<!-- 4. V5 闭环协作 -->
+<div class="card">
+<h2>🔄 V5 CollabLoop 闭环</h2>
+<div class="mermaid">
+sequenceDiagram
+    participant U as 用户
+    participant W as Writer(快模型)
+    participant R as Reviewer(强模型)
+    
+    U->>W: 任务描述
+    W->>R: 初稿 draft #1
+    R->>R: 结构化评分(0-100)
+    
+    alt score ≥ 80
+        R-->>U: ✅ PASSED
+    else score < 80
+        R->>W: StructuredFeedback<br/>(问题+建议+优点)
+        W->>W: 辩解 Rebuttal
+        W->>R: 辩解理由
+        R->>R: Rejudge (+15分上限)
+        
+        alt rejudge ≥ 80 或 上调达标
+            R-->>U: ✅ PASSED (after rebuttal)
+        else 仍不通过
+            W->>W: 带反馈修正
+            W->>R: 修正稿 draft #2
+            R->>R: 重新评分
+        end
+    end
+    
+    Note over U,R: 上调递减: 第1轮+15, 后续+5<br/>max_iterations 默认3轮
+</div>
+</div>
+
+<!-- 5. Fallback 降级链 -->
+<div class="card">
+<h2>🛡️ Fallback 429降级链</h2>
+<div class="mermaid">
+flowchart LR
+    A["Backend A<br/>(priority=10)"] -->|429/503| B["Backend B<br/>(priority=8)"]
+    B -->|429/503| C["Backend C<br/>(priority=5)"]
+    C -->|429/503| D["Backend D<br/>(priority=0)"]
+    D -->|429/503| E["❌ 全挂"]
+    
+    A -->|200 OK| OK1["✅"]
+    B -->|200 OK| OK2["✅"]
+    C -->|200 OK| OK3["✅"]
+    D -->|200 OK| OK4["✅"]
+    
+    style A fill:#238636,color:#fff
+    style B fill:#1f6feb,color:#fff
+    style C fill:#f0883e,color:#fff
+    style D fill:#8957e5,color:#fff
+    style E fill:#da3633,color:#fff
+</div>
+</div>
+
+<!-- 6. 模块依赖 -->
+<div class="card">
+<h2>📦 模块依赖关系</h2>
+<div class="mermaid">
+graph BT
+    subgraph Core["🧱 Core"]
+        Events["EventBus"]
+        Budget["TokenBudget"]
+        Memory["SQLite Memory"]
+        Validation["OutputValidator"]
+        Verbose["VerboseLogger<br/>+ CostTracker"]
+    end
+    
+    subgraph Experts["🎯 Experts"]
+        Classifier["TaskClassifier"]
+        Registry["ExpertRegistry"]
+        YAML["experts.yaml"]
+    end
+    
+    subgraph Agents["🤖 Agents"]
+        CoT["CoTAgent"]
+        Executor["ExecutorAgent"]
+        Reviewer["ReviewAgent"]
+        Collab["CollaborationLoop"]
+        Types["CollaborationResult"]
+    end
+    
+    subgraph Backends["🔌 Backends"]
+        Client["LLMClient"]
+        Multi["MultiLLMClient"]
+        Router["ModelRouter"]
+        SmartInit["SmartInit"]
+        Fallback["FallbackManager"]
+    end
+    
+    Staff["AIStaff<br/>(staff.py)"]
+    
+    Staff --> Agents
+    Staff --> Experts
+    Staff --> Backends
+    Agents --> Core
+    Experts --> Core
+    Backends --> Core
+    Collab --> Types
+    Multi --> Client
+    Fallback --> Multi
+    SmartInit --> Multi
+    Registry --> YAML
+    
+    style Staff fill:#da3633,color:#fff
+    style Core fill:#1f6feb22
+    style Experts fill:#8957e522
+    style Agents fill:#23863622
+    style Backends fill:#f0883e22
+</div>
+</div>
+
+</div>
+
+<p style="text-align:center; color:#8b949e; margin-top:24px; font-size:0.8em;">
+  AI-Staff V4.1 | 架构流程图 | 2026-04-24
+</p>
+
+<script>
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'dark',
+  themeVariables: {
+    primaryColor: '#1f6feb',
+    primaryTextColor: '#c9d1d9',
+    primaryBorderColor: '#30363d',
+    lineColor: '#8b949e',
+    secondaryColor: '#161b22',
+    tertiaryColor: '#21262d',
+    fontFamily: 'Segoe UI, sans-serif',
+    fontSize: '13px'
+  },
+  flowchart: { htmlLabels: true, curve: 'basis' },
+  sequence: { actorMargin: 80, mirrorActors: false }
+});
+</script>
+</body>
+</html>

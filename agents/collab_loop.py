@@ -25,6 +25,7 @@ from typing import Optional
 from ..backends.client import LLMClient
 from ..backends.smart_init import ModelRegistry, ModelInfo
 from ..core.events import EventBus, Event, EventType, bus
+from ..core.verbose import log, cost_tracker
 from ..experts.registry import ExpertRegistry, ExpertConfig
 from ..core.validation import ValidationResult
 
@@ -288,6 +289,7 @@ class CollaborationLoop:
         start_time = time.time()
         current_draft = ""
         last_feedback: Optional[StructuredFeedback] = None
+        total_tokens = 0  # 累计所有LLM调用的token
         
         bus.publish(Event(EventType.TASK_START, {
             "trace_id": trace_id, "task": task[:100],
@@ -296,10 +298,9 @@ class CollaborationLoop:
             "max_iterations": route_ctx.max_iterations,
         }, source="CollabLoop"))
         
-        print(f"\n  [CollabLoop] trace={trace_id}")
-        print(f"     Task: {task[:60]}...")
-        print(f"     Writer: {route_ctx.writer_model} | Reviewer: {route_ctx.reviewer_model}")
-        print(f"     MaxIter: {route_ctx.max_iterations} | Threshold: {route_ctx.quality_threshold}")
+        log.divider(f"V5 CollabLoop trace={trace_id}")
+        log.route(route_ctx.task_type, route_ctx.writer_model, route_ctx.reviewer_model)
+        log.system(f"Task: {task[:80]}... | MaxIter={route_ctx.max_iterations} | Threshold={route_ctx.quality_threshold}")
         
         for iteration in range(route_ctx.max_iterations):
             phase = CollabPhase.EXECUTING if iteration == 0 else CollabPhase.REVISING
@@ -323,8 +324,10 @@ class CollaborationLoop:
                 ]
                 exec_model = route_ctx.writer_model
             
+            log.phase_start("exec" if iteration == 0 else "revise", iteration + 1)
+            
             # ── Call LLM with 429 fallback ──
-            current_draft, exec_model_used = self._call_with_fallback(
+            current_draft, exec_model_used, exec_tokens = self._call_with_fallback(
                 writer_client, exec_msgs, exec_model,
                 temperature=expert.temperature, max_tokens=4096,
                 fallback_model=route_ctx.reviewer_model,
@@ -332,11 +335,13 @@ class CollaborationLoop:
             )
             
             if not current_draft:
-                print(f"     [{phase.value} #{iteration+1}] EMPTY output, skipping review")
+                log.warn(f"[{phase.value} #{iteration+1}] EMPTY output, skipping review")
                 bus.publish(Event(EventType.TASK_ERROR, {
                     "trace_id": trace_id, "phase": phase.value, "error": "empty_output",
                 }, source="CollabLoop"))
                 continue
+            
+            total_tokens += exec_tokens
             
             self._trace_log.append(CollabPacket(
                 trace_id=trace_id, phase=phase, content=current_draft[:200],
@@ -345,13 +350,14 @@ class CollaborationLoop:
             
             # ── 不需要审查的简单任务 → 直接返回 ──
             if not route_ctx.needs_review:
-                print(f"     >> Simple task, skip review")
+                log.writer(f"Simple task, skip review")
+                log.phase_end("exec", chars=len(current_draft))
                 total_time = time.time() - start_time
                 return current_draft, {
                     "status": "success", "iterations": iteration + 1,
                     "final_score": -1, "total_time": round(total_time, 2),
                     "writer_model": exec_model_used, "review_needed": False,
-                    "trace_id": trace_id,
+                    "trace_id": trace_id, "total_tokens": total_tokens,
                 }
             
             # ── Phase: Review ──
@@ -371,7 +377,7 @@ class CollaborationLoop:
                 )},
             ]
             
-            review_raw, review_model_used = self._call_with_fallback(
+            review_raw, review_model_used, review_tokens = self._call_with_fallback(
                 reviewer_client, review_msgs, route_ctx.reviewer_model,
                 temperature=0.2, max_tokens=1024,
                 fallback_model=route_ctx.writer_model,
@@ -380,7 +386,7 @@ class CollaborationLoop:
             
             if not review_raw:
                 # review完全失败，用writer自审
-                print(f"     [review #{iteration+1}] Review failed, using self-assessment")
+                log.warn("Review failed, using self-assessment")
                 last_feedback = StructuredFeedback(
                     score=65, passed=False,
                     issues=["审查模型不可用，自动降分"],
@@ -391,6 +397,7 @@ class CollaborationLoop:
             
             feedback = self._parse_review(review_raw)
             last_feedback = feedback
+            total_tokens += review_tokens
             
             self._trace_log.append(CollabPacket(
                 trace_id=trace_id, phase=CollabPhase.REVIEWING,
@@ -399,13 +406,13 @@ class CollaborationLoop:
                 model_used=review_model_used, expert_used="critic",
             ))
             
-            print(f"     [review #{iteration+1}] score={feedback.score}/100 "
-                  f"issues={len(feedback.issues)} / {review_model_used}")
+            log.phase_end("review", score=feedback.score, chars=len(current_draft))
+            log.budget(tokens=review_tokens, model=review_model_used, phase=f"review#{iteration+1}")
             
             # ── Phase: Judge ──
             if feedback.score >= route_ctx.quality_threshold:
                 total_time = time.time() - start_time
-                print(f"     >> PASSED (score={feedback.score} >= {route_ctx.quality_threshold})")
+                log.success(f"PASSED (score={feedback.score} >= {route_ctx.quality_threshold})")
                 
                 bus.publish(Event(EventType.TASK_COMPLETE, {
                     "trace_id": trace_id, "score": feedback.score,
@@ -421,12 +428,13 @@ class CollaborationLoop:
                     "writer_model": exec_model_used,
                     "reviewer_model": review_model_used,
                     "trace_id": trace_id,
+                    "total_tokens": total_tokens,
                 }
             else:
                 # ── Phase: Rebuttal (辩论协议) ──
                 # 低分时：先让Executor辩解，不是盲目改
                 if feedback.score >= 50 and iteration < route_ctx.max_iterations - 1:
-                    print(f"     >> REBUTTAL (score={feedback.score}, letting writer defend)")
+                    log.reviewer(f"REBUTTAL (score={feedback.score}, letting writer defend)")
                     
                     rebuttal_msgs = [
                         {"role": "system", "content": f"{expert.system_prompt}\n你是一位资深领域专家。面对审查批评，你有权为自己的选择辩护，但必须以事实和逻辑为依据。"},
@@ -443,7 +451,7 @@ class CollaborationLoop:
 要求：以事实为依据，不要讨好审查员。如果你有合理理由，坚定地辩护。"""},
                     ]
                     
-                    rebuttal_text, _ = self._call_with_fallback(
+                    rebuttal_text, _, _ = self._call_with_fallback(
                         writer_client, rebuttal_msgs, exec_model_used,
                         temperature=0.3, max_tokens=512,
                         fallback_model=route_ctx.reviewer_model,
@@ -478,7 +486,7 @@ class CollaborationLoop:
 只输出JSON：{{"new_score": <int>, "accepted_rebuttals": ["接受的辩解1"], "remaining_issues": ["仍需修改1"]}}"""},
                         ]
                         
-                        rejudge_raw, _ = self._call_with_fallback(
+                        rejudge_raw, _, _ = self._call_with_fallback(
                             reviewer_client, rejudge_msgs, route_ctx.reviewer_model,
                             temperature=0.2, max_tokens=256,
                             fallback_model=route_ctx.writer_model,
@@ -498,7 +506,7 @@ class CollaborationLoop:
                                         max_boost = 15 if iteration == 0 else 5
                                         actual_boost = min(max_boost, new_score - feedback.score)
                                         adjusted_score = feedback.score + actual_boost
-                                        print(f"     >> REJUDGE: {feedback.score} -> {adjusted_score} (rebuttal accepted, boost={actual_boost})")
+                                        log.writer(f"REJUDGE: {feedback.score} → {adjusted_score} (rebuttal boost=+{actual_boost})")
                                         feedback.score = min(100, adjusted_score)
                                         feedback.passed = new_score >= route_ctx.quality_threshold
                                         remaining = rj.get("remaining_issues", feedback.issues)
@@ -517,16 +525,17 @@ class CollaborationLoop:
                                                 "reviewer_model": review_model_used,
                                                 "rebuttal_accepted": True,
                                                 "trace_id": trace_id,
+                                                "total_tokens": total_tokens,
                                             }
                             except (json.JSONDecodeError, Exception):
                                 pass  # rejudge失败，继续正常revising
                 
-                print(f"     >> RETRY (score={feedback.score} < {route_ctx.quality_threshold})")
+                log.warn(f"RETRY (score={feedback.score} < {route_ctx.quality_threshold})")
         
         # 超过最大迭代次数
         total_time = time.time() - start_time
         final_score = last_feedback.score if last_feedback else 0
-        print(f"     ⚠️ 超过最大迭代次数 ({route_ctx.max_iterations}), 当前分数={final_score}")
+        log.warn(f"超过最大迭代次数 ({route_ctx.max_iterations}), 当前分数={final_score}")
         
         bus.publish(Event(EventType.TASK_COMPLETE, {
             "trace_id": trace_id, "score": final_score,
@@ -543,6 +552,7 @@ class CollaborationLoop:
             "writer_model": route_ctx.writer_model,
             "reviewer_model": route_ctx.reviewer_model,
             "trace_id": trace_id,
+            "total_tokens": total_tokens,
         }
     
     def _call_with_fallback(self, primary_client: LLMClient,
@@ -550,7 +560,7 @@ class CollaborationLoop:
                             temperature: float = 0.7, max_tokens: int = 4096,
                             fallback_model: str = "",
                             phase_label: str = "call",
-                            max_retries: int = 1) -> tuple[str, str]:
+                            max_retries: int = 1) -> tuple[str, str, int]:
         """
         带模型降级的LLM调用
         
@@ -559,55 +569,59 @@ class CollaborationLoop:
         2. 失败 → 直接换fallback_model
         3. 还失败 → 轮转所有可用客户端
         
-        Returns: (content, actual_model_used)
+        Returns: (content, actual_model_used, tokens_used)
         """
         actual_model = model
+        tokens_used = 0
         
         # 尝试1: 用primary client（LLMClient内部已有重试机制）
         try:
-            content, _ = primary_client.chat_completion(
+            content, usage = primary_client.chat_completion(
                 messages, temperature=temperature,
                 model=actual_model, max_tokens=max_tokens,
             )
             if content and content.strip():
-                return content, actual_model
+                tokens_used = usage.get("total_tokens", 0)
+                return content, actual_model, tokens_used
         except Exception as e:
             err_str = str(e)
-            print(f"     [{phase_label}] Primary failed: {err_str[:60]}")
+            log.warn(f"[{phase_label}] Primary failed: {err_str[:60]}")
         
         # 尝试2: 降级到fallback模型
         if fallback_model and fallback_model != actual_model:
             fallback_client = self._get_client(fallback_model)
             if fallback_client:
-                print(f"     [{phase_label}] Fallback -> {fallback_model}")
+                log.system(f"[{phase_label}] Fallback → {fallback_model}")
                 try:
-                    content, _ = fallback_client.chat_completion(
+                    content, usage = fallback_client.chat_completion(
                         messages, temperature=temperature,
                         model=fallback_model, max_tokens=max_tokens,
                     )
                     if content and content.strip():
-                        return content, fallback_model
+                        tokens_used = usage.get("total_tokens", 0)
+                        return content, fallback_model, tokens_used
                 except Exception as e:
-                    print(f"     [{phase_label}] Fallback also failed: {str(e)[:60]}")
+                    log.error(f"[{phase_label}] Fallback also failed: {str(e)[:60]}")
         
         # 尝试3: 轮转所有可用客户端
         for client_key, client in self._clients.items():
             client_model = getattr(client, 'model', '')
             if client_model in (actual_model, fallback_model):
                 continue
-            print(f"     [{phase_label}] Last resort: {client_model}")
+            log.warn(f"[{phase_label}] Last resort: {client_model}")
             try:
-                content, _ = client.chat_completion(
+                content, usage = client.chat_completion(
                     messages, temperature=temperature,
                     model=client_model, max_tokens=max_tokens,
                 )
                 if content and content.strip():
-                    return content, client_model
+                    tokens_used = usage.get("total_tokens", 0)
+                    return content, client_model, tokens_used
             except Exception:
                 continue
         
-        print(f"     [{phase_label}] ALL attempts exhausted")
-        return "", actual_model
+        log.error(f"[{phase_label}] ALL attempts exhausted")
+        return "", actual_model, 0
     
     def _auto_route(self, task: str) -> RouteContext:
         """自动路由：复用TaskClassifier统一分类，不再重复维护关键词表"""
@@ -652,28 +666,27 @@ class CollaborationLoop:
         """根据角色选择模型：fast(快模型) / strong(强模型)
         
         策略：
-          fast: 选最快且免费的模型做Writer（2.5-flash-lite优先）
-          strong: 选能力最强的可用模型做Reviewer（3.x优先，更强判断力）
+          fast: 选延迟最低的免费模型做Writer
+          strong: 选strength_score最高的可用模型做Reviewer
         """
-        if not self._registry:
-            return "gemini-2.5-flash-lite" if role == "fast" else "gemini-3-flash-preview"
+        if not self._registry or not self._registry.usable_models:
+            # 没有registry时，用clients里第一个可用的
+            if self._clients:
+                first_key = next(iter(self._clients))
+                client = self._clients[first_key]
+                return getattr(client, 'model', '') or first_key
+            return ""
         
         usable = self._registry.usable_models
-        if not usable:
-            return "gemini-2.5-flash-lite"
         
         if role == "fast":
-            # 选最快的免费模型
+            # 选延迟最低的免费模型
             free = [m for m in usable if m.is_free]
-            if free:
-                return min(free, key=lambda m: m.latency_ms).name
-            return min(usable, key=lambda m: m.latency_ms).name
+            pool = free if free else usable
+            return min(pool, key=lambda m: m.latency_ms).name
         
         else:  # strong/reviewer
-            # 优先选3.x系列（更强判断力），其次选最强模型
-            v3_models = [m for m in usable if m.name.startswith("gemini-3")]
-            if v3_models:
-                return max(v3_models, key=lambda m: m.strength_score).name
+            # 选strength_score最高的模型
             return max(usable, key=lambda m: m.strength_score).name
     
     def _get_client(self, model_name: str) -> Optional[LLMClient]:

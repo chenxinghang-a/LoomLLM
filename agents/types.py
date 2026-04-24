@@ -117,15 +117,15 @@ class CollaborationResult:
     def _generate_report(self) -> str:
         """Generate a summary markdown report."""
         lines = [
-            f"# 📋 AI-Staff 执行报告",
+            f"# AI-Staff Execution Report",
             f"",
-            f"**目标:** {self.goal}",
-            f"**模式:** {self.strategy_mode} | **状态:** {self.status}",
-            f"**质量评分:** {self.quality_score}/10",
-            f"**耗时:** {self.total_time_sec:.1f}s | **轮次:** {self.rounds_used}",
-            f"**参与专家:** {', '.join(self.experts_used)}",
+            f"**Goal:** {self.goal}",
+            f"**Mode:** {self.strategy_mode} | **Status:** {self.status}",
+            f"**Quality:** {self.quality_score}/10",
+            f"**Time:** {self.total_time_sec:.1f}s | **Rounds:** {self.rounds_used}",
+            f"**Experts:** {', '.join(self.experts_used)}",
             f"",
-            f"## 交付物 ({len(self.deliverables)}个)",
+            f"## Deliverables ({len(self.deliverables)})",
             f"",
         ]
         for name, content in self.deliverables.items():
@@ -133,13 +133,36 @@ class CollaborationResult:
             lines.append(f"- **{name}**: {preview}...")
         
         if self.interaction_log:
-            lines.extend(["", f"## 互动日志", ""])
+            lines.extend(["", f"## Interaction Log", ""])
             for entry in self.interaction_log[-10:]:
                 lines.append(f"- [{entry.get('expert','?')}] {entry.get('action','')} "
                             f"({entry.get('chars',0)}ch)")
         
         lines.extend(["", "---", f"*AI-Staff V{VERSION} · {datetime.now().strftime('%Y-%m-%d %H:%M')}*"])
         return "\n".join(lines)
+
+    @property
+    def final_text(self) -> str:
+        """Get the main deliverable text (first or 'answer.txt')."""
+        if not self.deliverables:
+            return ""
+        # Prefer 'answer.txt', then first value
+        if "answer.txt" in self.deliverables:
+            return self.deliverables["answer.txt"]
+        return next(iter(self.deliverables.values()))
+
+    def __repr__(self) -> str:
+        score = f"{self.quality_score:.0f}/10" if self.quality_score else "N/A"
+        n_deliverables = len(self.deliverables)
+        preview = ""
+        if self.final_text:
+            preview = self.final_text[:60].replace('\n', ' ')
+        return (f"CollabResult(mode={self.strategy_mode}, status={self.status}, "
+                f"score={score}, deliverables={n_deliverables}, "
+                f"preview='{preview}...')")
+
+    def __str__(self) -> str:
+        return self.final_text
 
 
 

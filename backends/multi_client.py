@@ -8,6 +8,7 @@ from .client import LLMClient
 from .router import ModelRouter
 from .fallback import FallbackManager
 from ..core.budget import TokenBudgetManager
+from ..core.verbose import log
 
 
 class MultiLLMClient:
@@ -56,7 +57,7 @@ class MultiLLMClient:
         for c in self._clients.values():
             c.budget = self.budget
         
-        print(f"  [MultiLLM] Initialized {len(profiles)} backend(s): "
+        log.system(f"MultiLLM Initialized {len(profiles)} backend(s): "
               f"{', '.join(p.display_name for p in profiles.values())}")
 
     @property
@@ -127,14 +128,15 @@ class MultiLLMClient:
                 
                 if len(tried) > 1:
                     usage["fallback_from"] = tried[0]
-                    print(f"    [Fallback OK] {current.display_name} responded after {len(tried)-1} failure(s)")
+                    log.success(f"Fallback OK: {current.display_name} (after {len(tried)-1} fail)")
                 
                 return content, usage
             
             except Exception as e:
                 error_type = type(e).__name__
                 self.fallback.record_failure(current.name)
-                print(f"    [{error_type}] {current.display_name} failed: {str(e)[:60]}")
+                # Compact log: 只在首次和成功时详细
+                log.system(f"  x {current.display_name}: {str(e)[:40]}")
                 
                 # Get fallback candidates
                 candidates = self.fallback.get_fallback_chain(exclude=current.name)
@@ -148,10 +150,10 @@ class MultiLLMClient:
                 
                 current = candidates[0]
                 tried.append(current.name)
-                print(f"    [Fallback] Trying {current.display_name}... ({len(tried)} attempt(s))")
+                log.system(f"-> {current.display_name} (attempt {len(tried)})")
 
     def chat_all(self, messages: list[dict], temperature: float = 0.7,
-                 max_tokens: int = 8192, parallel: bool = False) -> dict[str, tuple[str, dict]]:
+                 max_tokens: int = 8192, parallel: bool = True) -> dict[str, tuple[str, dict]]:
         """
         Call ALL enabled backends concurrently (or sequentially).
         
@@ -164,23 +166,52 @@ class MultiLLMClient:
         """
         results = {}
         
-        for name in self.active_profiles:
-            prof = self.profiles[name]
-            try:
-                client = self._get_client(name)
-                content, usage = client.chat_completion(
-                    messages, temperature=temperature,
-                    model=prof.model, max_tokens=max_tokens
-                )
-                usage["backend"] = name
-                usage["model"] = prof.model
-                usage["tier"] = prof.tier
-                results[name] = (content, usage)
-            except Exception as e:
-                results[name] = (f"[ERROR] {e}", {"backend": name, "error": str(e)})
-            
-            if not parallel:
+        if not parallel:
+            # 串行模式（保留兼容）
+            for name in self.active_profiles:
+                prof = self.profiles[name]
+                try:
+                    client = self._get_client(name)
+                    content, usage = client.chat_completion(
+                        messages, temperature=temperature,
+                        model=prof.model, max_tokens=max_tokens
+                    )
+                    usage["backend"] = name
+                    usage["model"] = prof.model
+                    usage["tier"] = prof.tier
+                    results[name] = (content, usage)
+                except Exception as e:
+                    results[name] = (f"[ERROR] {e}", {"backend": name, "error": str(e)})
                 time.sleep(0.3)  # Polite rate-limit spacing
+        else:
+            # 并行模式 — ThreadPoolExecutor
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            
+            def _call_one(name: str) -> tuple[str, tuple[str, dict]]:
+                prof = self.profiles[name]
+                try:
+                    client = self._get_client(name)
+                    content, usage = client.chat_completion(
+                        messages, temperature=temperature,
+                        model=prof.model, max_tokens=max_tokens
+                    )
+                    usage["backend"] = name
+                    usage["model"] = prof.model
+                    usage["tier"] = prof.tier
+                    return name, (content, usage)
+                except Exception as e:
+                    return name, (f"[ERROR] {e}", {"backend": name, "error": str(e)})
+            
+            active = list(self.active_profiles)
+            with ThreadPoolExecutor(max_workers=min(len(active), 6)) as pool:
+                futures = {pool.submit(_call_one, n): n for n in active}
+                for future in as_completed(futures, timeout=120):
+                    try:
+                        name, result = future.result(timeout=60)
+                        results[name] = result
+                    except Exception as e:
+                        name = futures[future]
+                        results[name] = (f"[ERROR] {e}", {"backend": name, "error": str(e)})
         
         return results
 

@@ -6,6 +6,7 @@ import httpx
 
 # Intra-package imports
 from ..core.constants import DEFAULT_TIMEOUT, MAX_RETRIES, RETRY_DELAY
+from ..core.verbose import log, cost_tracker
 
 
 class LLMClient:
@@ -59,12 +60,8 @@ class LLMClient:
                 resp = self._client.post(url, headers=self.headers, json=payload)
                 
                 if resp.status_code == 429:
-                    # 429快速失败：只短暂等待1次，让上层降级处理
-                    if attempt < MAX_RETRIES - 1:
-                        print(f"    [429] Retry {attempt+1}/{MAX_RETRIES}")
-                        time.sleep(1)
-                        continue
-                    raise RuntimeError(f"429 Rate Limited after {MAX_RETRIES} attempts")
+                    # 429是硬限额，retry无意义，立即失败让上层fallback
+                    raise RuntimeError(f"429 Rate Limited ({self.model})")
                 
                 resp.raise_for_status()
                 data = resp.json()
@@ -87,17 +84,39 @@ class LLMClient:
                         model or self.model
                     )
                 
+                # Token cost real-time display
+                cost_tracker.record(
+                    usage_info["prompt_tokens"],
+                    usage_info["completion_tokens"],
+                    model=model or self.model
+                )
+                log.budget(
+                    tokens=usage_info["total_tokens"],
+                    model=model or self.model,
+                    phase="call"
+                )
+                
                 return content, usage_info
             
             except httpx.HTTPStatusError as e:
                 if attempt < MAX_RETRIES - 1:
-                    print(f"    [HTTP {e.response.status_code}] Retry {attempt+1}/{MAX_RETRIES}...")
+                    log.warn(f"[HTTP {e.response.status_code}] Retry {attempt+1}/{MAX_RETRIES}...")
                     time.sleep(RETRY_DELAY * (attempt + 1))
                 else:
                     raise RuntimeError(f"API request failed after {MAX_RETRIES} attempts: {e}")
+            except RuntimeError as e:
+                # 429 Rate Limited — 立即抛出，不走retry
+                if "429" in str(e):
+                    raise
+                # 其他RuntimeError也retry
+                if attempt < MAX_RETRIES - 1:
+                    log.warn(f"[{type(e).__name__}] {str(e)[:80]} Retry {attempt+1}/{MAX_RETRIES}...")
+                    time.sleep(RETRY_DELAY * (attempt + 1))
+                else:
+                    raise
             except Exception as e:
                 if attempt < MAX_RETRIES - 1:
-                    print(f"    [{type(e).__name__}] {str(e)[:80]} Retry {attempt+1}/{MAX_RETRIES}...")
+                    log.warn(f"[{type(e).__name__}] {str(e)[:80]} Retry {attempt+1}/{MAX_RETRIES}...")
                     time.sleep(RETRY_DELAY * (attempt + 1))
                 else:
                     raise RuntimeError(f"API call failed: {e}")

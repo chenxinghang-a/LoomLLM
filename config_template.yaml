@@ -1,108 +1,137 @@
 # ═══════════════════════════════════════════════════════════
-#  AI-Staff V4 配置文件
+#  AI-Staff V4.1 配置文件
 # ═══════════════════════════════════════════════════════════
 #
 #  使用方式：
-#    1. 复制此文件为 config.yaml (或任意路径)
-#    2. 填写你的 API 信息
-#    3. 运行: python -m ai_staff_v4 --config config.yaml chat -p "你好"
+#    1. 复制此文件为 config.yaml
+#    2. 填写你的 API Key（至少填一个）
+#    3. 启动: python -c "from ai_staff_v4 import AIStaff; s=AIStaff.from_config_file('config.yaml'); print(s.chat('hello'))"
 #
-#  或环境变量模式（无需配置文件）：
+#  环境变量模式（无需配置文件）：
 #    set GEMINI_API_KEY=your-key
 #    python -c "from ai_staff_v4 import AIStaff; s=AIStaff.from_env(); print(s.chat('hello'))"
 #
 
 # ── 默认模型 ──
-default_model: "gemini-2.5-flash"
+default_model: ""
 
 # ── 全局设置 ──
 settings:
-  proxy: ""                          # HTTP代理, 如 http://127.0.0.1:7890
-  default_expert: "generalist"        # 默认专家角色
-  timeout: 120                        # API超时(秒)
-  max_retries: 3                      # 重试次数
-  language: "zh-CN"                   # 界面语言
+  proxy: ""                          # HTTP代理, 如 http://127.0.0.1:7890 (海外Provider需要)
+  default_expert: "generalist"       # 默认专家
+  timeout: 120                       # API超时(秒)
+  max_retries: 3                     # 重试次数
+  language: "zh-CN"
 
-# ── LLM 后端配置（支持多个） ──
-#  每个 profile 是一个独立的 LLM 接入点
-#  系统会根据任务类型自动选择最优后端
+# ── LLM 后端配置 ──
+#  10个Provider按需开启，填key即用
+#  国内Provider(DeepSeek/Moonshot/Qwen/Zhipu/SiliconFlow)不需要代理
+#  海外Provider(Gemini/OpenAI/Groq/Anthropic)需要代理
 profiles:
-  # ── 主力模型（推荐 Gemini Flash, 便宜快速）──
+  # ═══ 国内友好（无需代理）═══
+
+  # DeepSeek — 性价比之王
+  deepseek:
+    provider: "deepseek"
+    base_url: "https://api.deepseek.com/v1"
+    api_key: "${DEEPSEEK_API_KEY}"
+    model: "deepseek-chat"
+    tier: "cheap"
+    priority: 9
+
+  # Moonshot (Kimi) — 长上下文
+  # moonshot:
+  #   provider: "moonshot"
+  #   base_url: "https://api.moonshot.cn/v1"
+  #   api_key: "${MOONSHOT_API_KEY}"
+  #   model: "kimi-k2.5"
+  #   tier: "standard"
+  #   priority: 7
+
+  # 通义千问 (DashScope)
+  # qwen:
+  #   provider: "qwen"
+  #   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  #   api_key: "${DASHSCOPE_API_KEY}"
+  #   model: "qwen-plus"
+  #   tier: "standard"
+  #   priority: 7
+
+  # 智谱GLM — glm-4-flash免费
+  # zhipu:
+  #   provider: "zhipu"
+  #   base_url: "https://open.bigmodel.cn/api/paas/v4"
+  #   api_key: "${ZHIPU_API_KEY}"
+  #   model: "glm-4-flash"
+  #   tier: "free"
+  #   priority: 8
+
+  # 硅基流动 — 多模型聚合
+  # siliconflow:
+  #   provider: "siliconflow"
+  #   base_url: "https://api.siliconflow.cn/v1"
+  #   api_key: "${SILICONFLOW_API_KEY}"
+  #   model: "Qwen/Qwen2.5-7B-Instruct"
+  #   tier: "free"
+  #   priority: 6
+
+  # ═══ 需要代理（海外）═══
+
+  # Gemini — Google
   gemini_flash:
     provider: "gemini"
     base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
-    api_key: "${GEMINI_API_KEY}"       # 环境变量自动替换
-    model: "gemini-2.5-flash"
-    tier: "standard"                    # standard | premium | budget
-    priority: 10                         # 数值越高优先
-
-  # ── 备选：Gemini Pro（复杂推理）──
-  gemini_pro:
-    provider: "gemini"
-    base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
     api_key: "${GEMINI_API_KEY}"
-    model: "gemini-2.5-pro"
-    tier: "premium"
-    priority: 5
+    model: "gemini-2.5-flash-lite"
+    tier: "free"
+    priority: 10
 
-  # ── OpenAI 兼容（通用）──
-  # openai_compat:
+  # OpenAI
+  # openai:
   #   provider: "openai"
   #   base_url: "https://api.openai.com/v1"
   #   api_key: "${OPENAI_API_KEY}"
   #   model: "gpt-4o-mini"
-  #   tier: "standard"
+  #   tier: "cheap"
   #   priority: 8
 
-  # ── Ollama 本地模型（免费，需先启动 ollama serve）──
+  # Groq — 免费极速推理
+  # groq:
+  #   provider: "groq"
+  #   base_url: "https://api.groq.com/openai/v1"
+  #   api_key: "${GROQ_API_KEY}"
+  #   model: "llama-3.3-70b-versatile"
+  #   tier: "free"
+  #   priority: 7
+
+  # Anthropic (Claude)
+  # anthropic:
+  #   provider: "anthropic"
+  #   base_url: "https://api.anthropic.com/v1"
+  #   api_key: "${ANTHROPIC_API_KEY}"
+  #   model: "claude-3-5-haiku-20241022"
+  #   tier: "cheap"
+  #   priority: 6
+
+  # ═══ 本地 ═══
+
+  # Ollama — 本地模型（免费，先运行 ollama serve）
   # ollama:
   #   provider: "ollama"
   #   base_url: "http://localhost:11434/v1"
   #   api_key: "ollama"
-  #   model: "qwen3:8b"
-  #   tier: "budget"
+  #   model: "qwen2.5:7b"
+  #   tier: "free"
   #   priority: 3
-
-  # ── DeepSeek (性价比之王)──
-  # deepseek:
-  #   provider: "deepseek"
-  #   base_url: "https://api.deepseek.com/v1"
-  #   api_key: "${DEEPSEEK_API_KEY}"
-  #   model: "deepseek-chat"
-  #   tier: "budget"
-  #   priority: 7
 
 # ── Token 预算管理 ──
 budget:
-  daily_limit_usd: 1.0               # 每日预算上限($)
-  warn_threshold: 0.7                 # 警告阈值(70%)
-  enable_tracking: true               # 是否追踪token用量
+  daily_limit_usd: 1.0
+  warn_threshold: 0.7
+  enable_tracking: true
 
-# ── 自我改进引擎 ──
-self_improve:
-  enabled: true                       # 开启自动反思
-  reflection_interval: 10             # 每N次任务触发一次反思
-  quality_threshold: 6.0              # 低于此分数触发反思(0-10)
-
-# ── 工作流引擎 V2 ──
-workflow:
-  max_steps: 8                        # DAG最大节点数
-  prefer_parallel: true               # 优先并行执行
-  fallback_mode: "linear"             # LLM失败时的回退策略
-
-# ── 内存/记忆系统 ──
+# ── 记忆系统 ──
 memory:
-  db_path: ".ai_staff_memory.db"      # SQLite 数据库路径
-  max_history_per_session: 100        # 每个会话最大记录数
-  auto_summarize_every: 20            # 每N轮自动摘要
-
-# ── REST API 服务端（可选）──
-api:
-  host: "127.0.0.1"
-  port: 19876
-  enabled: false                      # 设为true启动HTTP服务
-
-# ── MCP Bridge（可选）──
-mcp:
-  enabled: false
-  transport: "stdio"                  # stdio | http | sse
+  db_path: ".ai_staff_memory.db"
+  max_history_per_session: 100
+  auto_summarize_every: 20

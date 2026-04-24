@@ -170,12 +170,71 @@ class ModelRegistry:
 # ═══════════════════════════════════════════════════════════
 
 PROVIDER_DEFS = {
+    # ═══ 国内友好（无需代理）═══
+    "deepseek": {
+        "base_url": "https://api.deepseek.com/v1",
+        "list_url": "",
+        "env_keys": ["DEEPSEEK_API_KEY", "AI_STAFF_DEEPSEEK_KEY"],
+        "needs_proxy": False,
+        "can_list_models": False,
+        "known_models": [
+            ("deepseek-chat", "cheap", 0.00014, 0.00028, ["reasoning", "code", "creative"]),
+            ("deepseek-reasoner", "standard", 0.00055, 0.00219, ["reasoning", "code"]),
+        ],
+    },
+    "moonshot": {
+        "base_url": "https://api.moonshot.cn/v1",
+        "list_url": "",
+        "env_keys": ["MOONSHOT_API_KEY", "KIMI_API_KEY"],
+        "needs_proxy": False,
+        "can_list_models": False,
+        "known_models": [
+            ("kimi-k2.5", "standard", 0.002, 0.006, ["reasoning", "code", "creative", "long_context"]),
+            ("kimi-k2-turbo-preview", "cheap", 0.0005, 0.0015, ["reasoning", "code"]),
+        ],
+    },
+    "qwen": {
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "list_url": "",
+        "env_keys": ["DASHSCOPE_API_KEY", "QWEN_API_KEY", "ALIBABA_API_KEY"],
+        "needs_proxy": False,
+        "can_list_models": False,
+        "known_models": [
+            ("qwen-turbo", "cheap", 0.0003, 0.0006, ["reasoning", "code"]),
+            ("qwen-plus", "standard", 0.0008, 0.002, ["reasoning", "code", "creative"]),
+            ("qwen-max", "premium", 0.002, 0.006, ["reasoning", "code", "creative", "long_context"]),
+        ],
+    },
+    "zhipu": {
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "list_url": "",
+        "env_keys": ["ZHIPU_API_KEY", "ZAI_API_KEY", "GLM_API_KEY"],
+        "needs_proxy": False,
+        "can_list_models": False,
+        "known_models": [
+            ("glm-4-flash", "free", 0, 0, ["reasoning", "code"]),
+            ("glm-4-plus", "cheap", 0.00005, 0.00005, ["reasoning", "code", "creative"]),
+            ("glm-4", "standard", 0.0001, 0.0001, ["reasoning", "code", "creative", "long_context"]),
+        ],
+    },
+    "siliconflow": {
+        "base_url": "https://api.siliconflow.cn/v1",
+        "list_url": "",
+        "env_keys": ["SILICONFLOW_API_KEY", "SF_API_KEY"],
+        "needs_proxy": False,
+        "can_list_models": False,
+        "known_models": [
+            ("Qwen/Qwen2.5-7B-Instruct", "free", 0, 0, ["reasoning", "code"]),
+            ("deepseek-ai/DeepSeek-V3", "cheap", 0.00014, 0.00028, ["reasoning", "code", "creative"]),
+        ],
+    },
+    # ═══ 需要代理（海外）═══
     "gemini": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
         "list_url": "https://generativelanguage.googleapis.com/v1beta/models",
         "env_keys": ["GEMINI_API_KEY", "GOOGLE_API_KEY", "AI_STAFF_API_KEY"],
-        "needs_proxy": True,    # 中国需要代理
-        "can_list_models": True, # 支持 listModels API
+        "needs_proxy": True,
+        "can_list_models": True,
     },
     "openai": {
         "base_url": "https://api.openai.com/v1",
@@ -189,17 +248,30 @@ PROVIDER_DEFS = {
             ("gpt-3.5-turbo", "cheap", 0.0005, 0.0015, ["code"]),
         ],
     },
-    "deepseek": {
-        "base_url": "https://api.deepseek.com",
+    "groq": {
+        "base_url": "https://api.groq.com/openai/v1",
         "list_url": "",
-        "env_keys": ["DEEPSEEK_API_KEY", "AI_STAFF_DEEPSEEK_KEY"],
-        "needs_proxy": False,
+        "env_keys": ["GROQ_API_KEY"],
+        "needs_proxy": True,
         "can_list_models": False,
         "known_models": [
-            ("deepseek-chat", "cheap", 0.00014, 0.00028, ["reasoning", "code", "creative"]),
-            ("deepseek-reasoner", "standard", 0.00055, 0.00219, ["reasoning", "code"]),
+            ("llama-3.3-70b-versatile", "free", 0, 0, ["reasoning", "code", "creative"]),
+            ("mixtral-8x7b-32768", "free", 0, 0, ["reasoning", "long_context"]),
         ],
     },
+    "anthropic": {
+        "base_url": "https://api.anthropic.com/v1",
+        "list_url": "",
+        "env_keys": ["ANTHROPIC_API_KEY"],
+        "needs_proxy": True,
+        "can_list_models": False,
+        "known_models": [
+            ("claude-3-5-haiku-20241022", "cheap", 0.0008, 0.004, ["reasoning", "code"]),
+            ("claude-3-5-sonnet-20241022", "standard", 0.003, 0.015, ["reasoning", "code", "creative"]),
+        ],
+        "note": "Anthropic使用x-api-key头而非Bearer，LLMClient需适配",
+    },
+    # ═══ 本地 ═══
     "ollama": {
         "base_url": "http://localhost:11434/v1",
         "list_url": "http://localhost:11434/api/tags",
@@ -215,26 +287,84 @@ PROVIDER_DEFS = {
     },
 }
 
-# Gemini 模型能力标签
+# Gemini 模型能力标签（全量 2026-04 扫描结果）
 GEMINI_CAPABILITIES = {
-    "gemini-2.5-flash-lite": ["reasoning", "code", "creative"],
+    # ── 2.x 系列 ──
+    "gemini-2.0-flash": ["reasoning", "code", "creative"],
+    "gemini-2.0-flash-001": ["reasoning", "code", "creative"],
+    "gemini-2.0-flash-lite": ["reasoning", "code"],
+    "gemini-2.0-flash-lite-001": ["reasoning", "code"],
     "gemini-2.5-flash": ["reasoning", "code", "creative", "vision", "long_context"],
+    "gemini-2.5-flash-lite": ["reasoning", "code", "creative"],
+    "gemini-2.5-flash-image": ["reasoning", "code", "creative", "vision"],
     "gemini-2.5-pro": ["reasoning", "code", "creative", "vision", "long_context"],
+    # ── 3.x 系列 ──
     "gemini-3-flash-preview": ["reasoning", "code", "creative", "vision"],
     "gemini-3-pro-preview": ["reasoning", "code", "creative", "vision", "long_context"],
+    "gemini-3-pro-image-preview": ["reasoning", "code", "creative", "vision"],
+    # ── 3.1 系列 ──
     "gemini-3.1-flash-lite-preview": ["reasoning", "code", "creative"],
+    "gemini-3.1-flash-image-preview": ["reasoning", "code", "creative", "vision"],
+    "gemini-3.1-flash-tts-preview": ["reasoning", "code", "creative"],
+    "gemini-3.1-pro-preview": ["reasoning", "code", "creative", "vision", "long_context"],
+    "gemini-3.1-pro-preview-customtools": ["reasoning", "code", "creative", "vision", "long_context"],
+    # ── latest 别名 ──
+    "gemini-flash-latest": ["reasoning", "code", "creative"],
+    "gemini-flash-lite-latest": ["reasoning", "code"],
+    "gemini-pro-latest": ["reasoning", "code", "creative", "vision", "long_context"],
+    # ── Deep Research ──
+    "deep-research-preview-04-2026": ["reasoning", "long_context"],
+    "deep-research-max-preview-04-2026": ["reasoning", "long_context"],
+    "deep-research-pro-preview-12-2025": ["reasoning", "long_context"],
+    # ── Gemma 开源 ──
+    "gemma-3-1b-it": ["reasoning"],
+    "gemma-3-4b-it": ["reasoning", "code"],
+    "gemma-3-12b-it": ["reasoning", "code", "creative"],
+    "gemma-3-27b-it": ["reasoning", "code", "creative"],
+    "gemma-3n-e2b-it": ["reasoning"],
+    "gemma-3n-e4b-it": ["reasoning", "code"],
+    "gemma-4-26b-a4b-it": ["reasoning", "code", "creative"],
+    "gemma-4-31b-it": ["reasoning", "code", "creative"],
 }
 
-# Gemini 模型 tier 映射
+# Gemini 模型 tier 映射（全量 2026-04）
 GEMINI_TIER_MAP = {
-    "gemini-2.5-flash-lite": ("free", 0, 0),
+    # ── 2.x ──
+    "gemini-2.0-flash": ("free", 0, 0),
+    "gemini-2.0-flash-001": ("free", 0, 0),
+    "gemini-2.0-flash-lite": ("free", 0, 0),
+    "gemini-2.0-flash-lite-001": ("free", 0, 0),
     "gemini-2.5-flash": ("standard", 0.000075, 0.0003),
+    "gemini-2.5-flash-lite": ("free", 0, 0),
+    "gemini-2.5-flash-image": ("standard", 0.000075, 0.0003),
     "gemini-2.5-pro": ("premium", 0.00125, 0.005),
+    # ── 3.x ──
     "gemini-3-flash-preview": ("free", 0, 0),
     "gemini-3-pro-preview": ("standard", 0.0001, 0.0004),
+    "gemini-3-pro-image-preview": ("standard", 0.0001, 0.0004),
+    # ── 3.1 ──
     "gemini-3.1-flash-lite-preview": ("free", 0, 0),
-    "gemini-2.0-flash": ("free", 0, 0),
-    "gemini-2.0-flash-lite": ("free", 0, 0),
+    "gemini-3.1-flash-image-preview": ("free", 0, 0),
+    "gemini-3.1-flash-tts-preview": ("free", 0, 0),
+    "gemini-3.1-pro-preview": ("standard", 0.0001, 0.0004),
+    "gemini-3.1-pro-preview-customtools": ("standard", 0.0001, 0.0004),
+    # ── latest ──
+    "gemini-flash-latest": ("free", 0, 0),
+    "gemini-flash-lite-latest": ("free", 0, 0),
+    "gemini-pro-latest": ("premium", 0.00125, 0.005),
+    # ── Deep Research ──
+    "deep-research-preview-04-2026": ("premium", 0.002, 0.008),
+    "deep-research-max-preview-04-2026": ("premium", 0.002, 0.008),
+    "deep-research-pro-preview-12-2025": ("premium", 0.002, 0.008),
+    # ── Gemma ──
+    "gemma-3-1b-it": ("free", 0, 0),
+    "gemma-3-4b-it": ("free", 0, 0),
+    "gemma-3-12b-it": ("free", 0, 0),
+    "gemma-3-27b-it": ("free", 0, 0),
+    "gemma-3n-e2b-it": ("free", 0, 0),
+    "gemma-3n-e4b-it": ("free", 0, 0),
+    "gemma-4-26b-a4b-it": ("free", 0, 0),
+    "gemma-4-31b-it": ("free", 0, 0),
 }
 
 # 代理端口
@@ -369,7 +499,10 @@ class SmartInit:
 
         for provider, api_key in keys.items():
             print(f"  [SmartInit] Scanning {provider}...")
-            result = SmartInit._scan_provider(provider, api_key, proxy)
+            # needs_proxy: 只给需要代理的provider传proxy
+            pdef = PROVIDER_DEFS.get(provider, {})
+            effective_proxy = proxy if pdef.get("needs_proxy", False) else ""
+            result = SmartInit._scan_provider(provider, api_key, effective_proxy)
             provider_results[provider] = result
             all_models.extend(result.models)
             if result.models:
@@ -467,41 +600,76 @@ class SmartInit:
 
     @staticmethod
     def _scan_gemini_models(api_key: str, proxy: str) -> list[ModelInfo]:
-        """Gemini专用扫描：listModels API + 逐个测试"""
+        """Gemini专用扫描：listModels API → 智能过滤 → 分层测试
+        
+        策略：
+          - 先list models获取全量清单
+          - 过滤掉tts/image/robotics/lyria/nano-banana等非聊天模型
+          - 优先测试 gemini-* 模型，按tier排（free先测）
+          - gemma-* 只测1个代表（都免费，省时间）
+          - 找到可用模型后继续扫几秒以发现更多，但不全量扫完
+        """
         all_names = SmartInit._list_gemini_models(api_key, proxy)
         if not all_names:
             all_names = list(GEMINI_TIER_MAP.keys())
 
-        # 过滤+优先级
-        skip = {"deep-research", "lyria", "tts", "image", "computer-use", "nano-banana"}
-        priority = ["gemini-2.5-flash", "gemini-3-flash", "gemini-3.1-flash"]
+        # 过滤掉非聊天模型
+        skip = {"lyria", "nano-banana", "robotics", "-tts-", "computer-use"}
         
-        prio_list = []
-        other_list = []
+        # 分类：gemini-开头 → deep-research → gemma- → 其他
+        gemini_names = []
+        deep_names = []
+        gemma_names = []
+        other_names = []
         for n in all_names:
             if any(s in n.lower() for s in skip):
                 continue
-            if any(n.startswith(p) for p in priority) or n.startswith("gemini-"):
-                prio_list.append(n)
+            if n.startswith("gemini-"):
+                gemini_names.append(n)
+            elif n.startswith("deep-research"):
+                deep_names.append(n)
+            elif n.startswith("gemma-"):
+                gemma_names.append(n)
             else:
-                other_list.append(n)
+                other_names.append(n)
 
+        # gemini模型按tier排序：free优先测
+        def _tier_sort(name):
+            tier, _, _ = GEMINI_TIER_MAP.get(name, ("standard", 0, 0))
+            return {"free": 0, "cheap": 1, "standard": 2, "premium": 3}.get(tier, 4)
+        gemini_names.sort(key=_tier_sort)
+        
+        # gemma只保留2个代表（省时间，gemma基本都可用）
+        if len(gemma_names) > 2:
+            # 保留最大的2个
+            gemma_keep = []
+            for n in sorted(gemma_names, reverse=True):
+                if len(gemma_keep) >= 2:
+                    break
+                gemma_keep.append(n)
+            gemma_names = gemma_keep
+
+        # 测试顺序：gemini(free first) → deep-research → gemma → other
+        scan_order = gemini_names + deep_names + gemma_names + other_names
         models: list[ModelInfo] = []
-        best_found = False
-
-        for name in prio_list:
+        
+        # 计时扫描：最多60秒，测够10个可用模型就停
+        scan_start = time.time()
+        usable_count = 0
+        for name in scan_order:
+            if time.time() - scan_start > 55:  # 留5秒buffer
+                # 超时：剩余模型标记为未测试
+                tier, inp, out = GEMINI_TIER_MAP.get(name, ("standard", 0.0001, 0.0004))
+                models.append(ModelInfo(name=name, provider="gemini",
+                    base_url=PROVIDER_DEFS["gemini"]["base_url"], status=-1, latency_ms=0,
+                    tier=tier, input_cost=inp, output_cost=out,
+                    capabilities=GEMINI_CAPABILITIES.get(name, ["reasoning"])))
+                continue
+            
             info = SmartInit._test_gemini_model(api_key, name, proxy)
             models.append(info)
-            if info.is_usable and info.is_free and "flash" in name:
-                best_found = True
-                break
-
-        if not best_found:
-            for name in other_list:
-                info = SmartInit._test_gemini_model(api_key, name, proxy)
-                models.append(info)
-                if info.is_usable:
-                    break
+            if info.is_usable:
+                usable_count += 1
 
         return models
 
@@ -537,25 +705,24 @@ class SmartInit:
 
         tier, inp, out = GEMINI_TIER_MAP.get(model, ("standard", 0.0001, 0.0004))
         caps = GEMINI_CAPABILITIES.get(model, ["reasoning"])
+        base_url = PROVIDER_DEFS["gemini"]["base_url"]
 
         try:
             with httpx.Client(**kwargs) as c:
                 t0 = time.time()
                 r = c.post(
-                    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                    f"{base_url}/chat/completions",
                     headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                     json={"model": model, "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 5},
                 )
                 latency = (time.time() - t0) * 1000
                 return ModelInfo(name=model, provider="gemini",
-                    base_url="https://generativelanguage.googleapis.com/v1beta/openai",
-                    status=r.status_code, latency_ms=round(latency),
+                    base_url=base_url, status=r.status_code, latency_ms=round(latency),
                     tier=tier, input_cost=inp, output_cost=out,
                     capabilities=caps, key_source="auto")
         except Exception:
             return ModelInfo(name=model, provider="gemini",
-                base_url="https://generativelanguage.googleapis.com/v1beta/openai",
-                status=0, latency_ms=0, tier=tier, input_cost=inp, output_cost=out,
+                base_url=base_url, status=0, latency_ms=0, tier=tier, input_cost=inp, output_cost=out,
                 capabilities=caps)
 
     @staticmethod

@@ -4,13 +4,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-# Intra-package imports — the full dependency graph
+# Intra-package imports — core only
 from ..core.constants import VERSION, MAX_RETRIES
 from ..core.events import EventBus, Event, EventType
 from ..core.memory import MemorySystem
 from ..core.validation import OutputValidator
 from ..core.budget import TokenBudgetManager, BudgetConfig
-# checkpoint.py 已删除（死代码）
+from ..core.verbose import log, cost_tracker
 from ..experts.registry import ExpertRegistry, ExpertConfig
 from ..experts.classifier import TaskClassifier, TaskStrategy
 from ..backends.client import LLMClient
@@ -21,10 +21,7 @@ from ..agents.cot import CoTAgent
 from ..agents.executor import ExecutorAgent
 from ..agents.reviewer import ReviewAgent
 from ..agents.memory_agent import MemoryAgent
-# V1 workflow.py 已删除（死代码），V2/V5替代
-from ..self_improve.engine import SelfImprovementEngine
-from ..workflow_v2.generator import WorkflowGeneratorV2
-from ..workflow_v2.executor import WorkflowExecutorV2
+# Removed: self_improve, workflow_v2, skills, endpoints (V4.1 cleanup)
 
 # Global event bus instance
 bus = EventBus()
@@ -89,10 +86,10 @@ class AIStaff:
         
         # Load experts
         n_experts = ExpertRegistry.load_all()
-        print(f"  [AIStaff] Loaded {n_experts} expert(s)")
+        log.system(f"Loaded {n_experts} expert(s)")
         
         self.expert = ExpertRegistry.get(expert_id) or ExpertRegistry.get("generalist")
-        print(f"  [AIStaff] Active expert: {self.expert.name} ({self.expert.id})")
+        log.system(f"Active expert: {self.expert.name} ({self.expert.id})")
         
         # Initialize agents
         self.agents = {
@@ -113,68 +110,7 @@ class AIStaff:
         self._collab_loop: Optional[CollaborationLoop] = None
         
         # ═══ V4 COMPONENTS (lazy init) ═══
-        self._self_improve: Optional[SelfImprovementEngine] = None
-        self._wf_gen: Optional[WorkflowGeneratorV2] = None
-        self._wf_exe: Optional[WorkflowExecutorV2] = None
         self._config_path: str = ""  # For hot-reload
-    
-    def _attach_ai_router(self, registry):
-        """Attach AI Router with model registry for smart routing."""
-        from ..backends.ai_router import AIRouter
-        self._ai_router = AIRouter(registry, self.multi_llm._clients if self.multi_llm else {})
-        self._model_registry = registry
-
-    def _get_ai_router(self) -> Optional[AIRouter]:
-        """Get or create AI Router."""
-        if not hasattr(self, '_ai_router') or not self._ai_router:
-            if hasattr(self, '_model_registry'):
-                self._attach_ai_router(self._model_registry)
-        return getattr(self, '_ai_router', None)
-
-    def smart_route(self, user_input: str) -> dict:
-        """
-        AI-driven model routing: let the strongest model decide which model to use.
-        
-        Returns RouteDecision with model selection + reasoning.
-        Falls back to rule-based routing if AI unavailable.
-        """
-        router = self._get_ai_router()
-        if router:
-            return router.route(user_input)
-        # Fallback: use legacy ModelRouter
-        if self._multi_mode and self.model_router:
-            profile = self.model_router.route(user_input)
-            return {
-                "model_name": profile.model,
-                "profile_key": profile.name,
-                "reason": f"Rule-based: tier={profile.tier}",
-                "task_type": "auto",
-                "complexity": 5,
-                "needs_review": False,
-                "confidence": 0.5,
-            }
-        return {
-            "model_name": self.llm.model,
-            "profile_key": "default",
-            "reason": "No router available",
-            "task_type": "auto",
-            "complexity": 5,
-            "needs_review": False,
-            "confidence": 0.3,
-        }
-
-    def _get_si(self) -> SelfImprovementEngine:
-        """Lazy-init Self-Improvement Engine."""
-        if not self._self_improve:
-            # Use cheapest available backend for reflection
-            si_llm = self.llm
-            if self._multi_mode and self.multi_llm:
-                cheap = [p for p in self.backends.values()
-                         if p.tier in ("free", "cheap") and p.enabled]
-                if cheap:
-                    si_llm = self.multi_llm._clients.get(cheap[0].name, self.llm)
-            self._self_improve = SelfImprovementEngine(self.memory, si_llm)
-        return self._self_improve
     
     def _get_collab_loop(self):
         """Lazy-init V5 Collaboration Loop — AI↔AI闭环协作引擎"""
@@ -189,25 +125,16 @@ class AIStaff:
             self._collab_loop = CollaborationLoop(clients, registry)
         return self._collab_loop
     
-    def _get_wf(self) -> tuple[WorkflowGeneratorV2, WorkflowExecutorV2]:
-        """Lazy-init Workflow V2 components."""
-        if not self._wf_gen or not self._wf_exe:
-            wf_llm = self.llm
-            if self._multi_mode and self.multi_llm:
-                wf_llm = self.llm  # Use primary for generation
-            
-            self._wf_gen = WorkflowGeneratorV2(wf_llm)
-            
-            # Executor needs multi_llm or single client
-            mllm_for_exec = self.multi_llm if self._multi_mode else None
-            if not mllm_for_exec:
-                # Wrap single client to have .chat() interface-ish
-                mllm_for_exec = self.llm
-                
-            self._wf_exe = WorkflowExecutorV2(
-                self.agents, mllm_for_exec, self.memory, self.validator
-            )
-        return self._wf_gen, self._wf_exe
+    def _attach_ai_router(self, registry):
+        """绑定SmartInit扫描结果到AIStaff实例
+        
+        由startup.py的from_env()/quick_start()调用，
+        将ModelRegistry注入供CollaborationLoop的_pick_model()使用。
+        """
+        self._model_registry = registry
+        # 如果CollabLoop已初始化，更新其registry
+        if getattr(self, '_collab_loop', None):
+            self._collab_loop._registry = registry
     
     def _build_system_prompt(self) -> str:
         """Build system prompt with expert config + learned preferences."""
@@ -223,7 +150,8 @@ class AIStaff:
         
         return "\n".join(parts)
     
-    def chat(self, user_input: str, mode: str = "auto", **kwargs) -> str:
+    def chat(self, user_input: str, mode: str = "auto",
+             return_details: bool = False, **kwargs) -> str | CollaborationResult:
         """
         统一入口 — 用户只需记住这一个方法。
         
@@ -238,29 +166,68 @@ class AIStaff:
                 - "creative": 创意任务
                 - "collab": 多专家协作
                 - "arena": 跨模型对比
+            return_details: True时返回CollaborationResult（含trace_id/token/评分等），False返回纯文本
             **kwargs: 传递给底层方法的可选参数
                 - output_dir: 保存目录
                 - max_iterations: V5最大迭代次数
                 - quality_threshold: 质量阈值(0-100)
         
         Returns:
-            AI回复的文本内容（纯字符串）
+            return_details=False → str（纯文本回复）
+            return_details=True  → CollaborationResult（含完整元数据）
         
         Examples:
-            staff.chat("你好")                        # 自动模式
+            staff.chat("你好")                        # 自动模式，返回纯文本
+            staff.chat("你好", return_details=True)   # 返回完整结果对象
             staff.chat("写个快排", mode="code")        # 代码模式
             staff.chat("AI趋势分析", mode="research")  # 研究模式
         """
         if mode == "arena":
             questions = kwargs.get("questions", [user_input])
             profiles = kwargs.get("profiles", None)
-            return self.cross_arena(questions, profiles)
+            arena_report = self.cross_arena(questions, profiles)
+            # 包装成CollaborationResult
+            if return_details:
+                result = CollaborationResult(
+                    goal=user_input, status="success",
+                    strategy_mode="arena", trace_id=f"a_{os.urandom(3).hex()}",
+                    deliverables={"arena_report.md": arena_report},
+                    quality_score=7.0,
+                    rounds_used=1,
+                )
+                return result
+            return arena_report
         
         if mode != "auto":
             # 指定模式: 构造一个强制路由，不走分类器
-            return self._chat_forced_mode(user_input, mode, **kwargs)
+            result = self._chat_forced_mode(user_input, mode, **kwargs)
+            return result if return_details else self._extract_text(result)
         
-        # auto模式: 用V5闭环协作
+        # auto模式: 智能路由
+        # 简单问题（direct分类）→ 直接chat_single，不走闭环
+        classifier = TaskClassifier()
+        strategy = classifier.classify(user_input)
+        
+        if strategy.mode == "direct" and not strategy.needs_review:
+            # 快速路径：简单问答直接返回，省token省时间
+            try:
+                output, stats = self.chat_single(user_input)
+            except RuntimeError as e:
+                # 429/网络错误：尝试multi_llm fallback
+                output, stats = self._fallback_chat(user_input, str(e))
+            result = CollaborationResult(
+                goal=user_input, status="success",
+                strategy_mode="direct", trace_id=f"d_{os.urandom(3).hex()}",
+                deliverables={"answer.txt": output},
+                quality_score=stats.get("review_score") or 7.0,
+                rounds_used=1,
+                total_time_sec=stats.get("time", 0),
+                total_tokens=stats.get("total_tokens", 0),
+                experts_used=[strategy.primary_expert],
+            )
+            return result if return_details else output
+        
+        # 复杂任务 → V5闭环协作
         result = self.auto_run_v5(
             user_input,
             output_dir=kwargs.get("output_dir", ""),
@@ -268,19 +235,56 @@ class AIStaff:
             quality_threshold=kwargs.get("quality_threshold", 80),
         )
         
-        # 提取主要交付物
+        # 更新对话历史
+        self.messages.append({"role": "user", "content": user_input})
+        main_output = self._extract_text(result)
+        self.messages.append({"role": "assistant", "content": main_output})
+        
+        return result if return_details else main_output
+    
+    def _fallback_chat(self, user_input: str, error: str) -> tuple[str, dict]:
+        """当primary LLM失败时，尝试multi_llm的其他backend"""
+        if not self._multi_mode or not self.multi_llm:
+            return f"[ERROR] {error} (no fallback available)", {"error": error}
+        
+        log.warn(f"Primary failed: {error[:60]}, trying fallback...")
+        try:
+            msgs = [{"role": "user", "content": user_input}]
+            # 尝试非default的profile
+            alt_profiles = [p for p in self.multi_llm.active_profiles 
+                           if p != self.multi_llm.default_profile]
+            if alt_profiles:
+                profile = alt_profiles[0]
+                log.system(f"Trying profile: {profile}")
+            else:
+                profile = ""
+            content, usage = self.multi_llm.chat(
+                msgs, max_tokens=4096, profile=profile
+            )
+            log.success("Fallback succeeded!")
+            return content, {
+                "chars": len(content), "time": 0,
+                "review_score": None, "retries": 0,
+                "total_tokens": usage.get("total_tokens", 0),
+                "fallback": True,
+            }
+        except Exception as e2:
+            return f"[ERROR] All backends failed: {error} / {str(e2)[:100]}", {"error": str(e2)}
+
+    def _extract_text(self, result: CollaborationResult) -> str:
+        """从CollaborationResult提取主要文本"""
+        if isinstance(result, str):
+            return result
         if result.deliverables:
-            # 返回第一个非report非transcript的交付物
             for key in ("answer.txt", "solution.py", "research_report.md",
                        "decision_report.md", "creative_output.md"):
                 if key in result.deliverables:
                     return result.deliverables[key]
-            # fallback: 返回第一个交付物
             return list(result.deliverables.values())[0]
         return result.transcript or "[No output]"
     
-    def _chat_forced_mode(self, user_input: str, mode: str, **kwargs) -> str:
-        """强制模式: 跳过分类器，直接路由到指定执行路径"""
+    def _chat_forced_mode(self, user_input: str, mode: str, **kwargs) -> CollaborationResult:
+        """强制模式: 跳过分类器，直接路由到指定执行路径，返回CollaborationResult"""
         from ..experts.classifier import TaskStrategy
         
         mode_config = {
@@ -294,7 +298,8 @@ class AIStaff:
         
         cfg = mode_config.get(mode)
         if not cfg:
-            return self.chat(user_input)  # fallback to auto
+            # fallback to auto
+            return self.chat(user_input, return_details=True, **kwargs) if kwargs.get('return_details') else self.chat(user_input, return_details=True, **kwargs)
         
         strategy = TaskStrategy(
             mode=cfg["mode"], display_name=cfg["name"],
@@ -304,43 +309,73 @@ class AIStaff:
             description=cfg["desc"],
         )
         
-        # 用auto_run的内部路由（不走V5闭环，但走V3分类执行）
         total_start = time.time()
         result = CollaborationResult(
             goal=user_input, strategy_mode=strategy.mode,
             experts_used=strategy.experts.copy(),
+            trace_id=f"f_{os.urandom(3).hex()}",
         )
         
         try:
             if strategy.mode == "direct":
                 output, stats = self._execute_direct(user_input, strategy)
                 result.deliverables["answer.txt"] = output
+                result.total_tokens = stats.get("total_tokens", 0)
+                result.quality_score = stats.get("review_score") or 7.0
             elif strategy.mode == "code":
                 output, stats = self._execute_code_task(user_input, strategy)
                 result.deliverables["solution.py"] = output
+                result.total_tokens = stats.get("total_tokens", 0)
+                result.quality_score = stats.get("review_score") or 6.0
+                result.rounds_used = stats.get("retries", 0) + 1
             elif strategy.mode == "research":
                 output = self._execute_research(user_input, strategy)
                 result.deliverables["research_report.md"] = output
+                # research没有stats，从cost_tracker拿
+                try:
+                    from ..core.verbose import cost_tracker
+                    result.total_tokens = cost_tracker.total_tokens
+                except Exception:
+                    pass
+                result.quality_score = 7.0  # research没审查，给默认分
+                result.rounds_used = strategy.max_rounds
             elif strategy.mode == "decision":
                 output = self._execute_decision(user_input, strategy)
                 result.deliverables["decision_report.md"] = output
+                result.quality_score = 7.0
             elif strategy.mode == "creative":
                 output, stats = self._execute_creative(user_input, strategy)
                 result.deliverables["creative_output.md"] = output
+                result.total_tokens = stats.get("total_tokens", 0)
+                result.quality_score = stats.get("review_score") or 7.0
             elif strategy.mode == "collaborate":
                 collab_result = self.collaborate(goal=user_input, experts=strategy.experts,
                                                   max_rounds=strategy.max_rounds)
-                return list(collab_result.deliverables.values())[0] if collab_result.deliverables else collab_result.transcript
+                return collab_result  # 已经是CollaborationResult
             result.status = "success"
         except Exception as e:
-            result.status = "failed"
-            result.deliverables["error.txt"] = f"[ERROR] {type(e).__name__}: {e}"
+            err_str = str(e)
+            # 429/网络错误时尝试fallback
+            if "429" in err_str or "timeout" in err_str.lower():
+                log.warn(f"Forced mode hit 429/timeout, trying fallback...")
+                try:
+                    fallback_out, fallback_stats = self._fallback_chat(user_input, err_str)
+                    if not fallback_out.startswith("[ERROR]"):
+                        result.deliverables["answer.txt"] = fallback_out
+                        result.status = "success"
+                        result.total_tokens = fallback_stats.get("total_tokens", 0)
+                    else:
+                        result.status = "failed"
+                        result.deliverables["error.txt"] = fallback_out
+                except Exception:
+                    result.status = "failed"
+                    result.deliverables["error.txt"] = f"[ERROR] {type(e).__name__}: {e}"
+            else:
+                result.status = "failed"
+                result.deliverables["error.txt"] = f"[ERROR] {type(e).__name__}: {e}"
         
-        # 返回第一个有内容的交付物
-        for v in result.deliverables.values():
-            if v and not v.startswith("[ERROR]"):
-                return v
-        return list(result.deliverables.values())[0] if result.deliverables else "[No output]"
+        result.total_time_sec = time.time() - total_start
+        return result
     
     def chat_single(self, user_input: str, include_thinking: bool = False,
                     expert: 'ExpertConfig' = None) -> tuple[str, dict]:
@@ -358,6 +393,7 @@ class AIStaff:
         
         task_state = TaskState(task_id=f"chat_{len(self.messages)}")
         start_time = time.time()
+        total_tokens = 0
         
         try:
             # STEP 1: Plan (CoT) - for complex tasks (intelligent trigger)
@@ -406,11 +442,30 @@ class AIStaff:
             self.memory.save_message(self.session_id, "user", user_input, model=self.llm.model, expert_id=active_expert.id)
             self.memory.save_message(self.session_id, "assistant", output, model=self.llm.model, expert_id=active_expert.id)
             
+            # 累计token（优先从cost_tracker拿实际用量，fallback到budget）
+            input_tokens = 0
+            output_tokens = 0
+            try:
+                from ..core.verbose import cost_tracker
+                input_tokens = cost_tracker.total_input
+                output_tokens = cost_tracker.total_output
+                total_tokens = cost_tracker.total_tokens
+            except Exception:
+                if self.budget:
+                    try:
+                        budget_summary = self.budget.summary()
+                        total_tokens = budget_summary.get("total_tokens", 0)
+                    except Exception:
+                        pass
+            
             duration = time.time() - start_time
             stats = {
                 "chars": len(output), "time": round(duration, 1),
                 "review_score": task_state.review_result.score if task_state.review_result else None,
-                "retries": task_state.retry_count
+                "retries": task_state.retry_count,
+                "total_tokens": total_tokens,
+                "prompt_tokens": input_tokens,
+                "completion_tokens": output_tokens,
             }
             
             return output, stats
@@ -1005,18 +1060,28 @@ class AIStaff:
             expert=coder,
         )
         
+        # Protect against empty output (e.g. 429 fallback failure)
+        if not code_output or not code_output.strip():
+            return f"# Code Generation Failed\n\nAPI returned empty result (likely rate-limited). Please retry.\n\n## Requirement\n{user_input}", {"error": "empty_output"}
+        
         result = code_output
+        # 提取纯代码（去掉LLM可能加的markdown标记）
+        import re as _re
+        _code_clean = _re.sub(r'^```\w*\n?', '', code_output)
+        _code_clean = _re.sub(r'\n?```$', '', _code_clean)
+        
         if critic and strategy.needs_review:
-            review_prompt = f"审查以下代码的正确性、健壮性、性能和最佳实践。\n\n```python\n{code_output}\n```\n\n给出：1)评分(1-10) 2)问题清单 3)修复建议 4)如需则给出修正版代码。"
+            review_prompt = f"审查以下代码的正确性、健壮性、性能和最佳实践。\n\n```python\n{_code_clean}\n```\n\n给出：1)评分(1-10) 2)问题清单 3)修复建议 4)如需则给出修正版代码。"
             review, r_stats = self.chat_single(review_prompt, expert=critic)
-            result = f"# 代码方案\n\n```python\n{code_output}\n```\n\n---\n\n# 代码审查\n\n{review}"
+            result = f"# 代码方案\n\n```python\n{_code_clean}\n```\n\n---\n\n# 代码审查\n\n{review}"
             _stats['review_score'] = r_stats.get('review_score')
         
         return result, _stats or {}
 
     def _execute_research(self, topic: str, strategy: TaskStrategy) -> str:
-        """Research mode: iterative deep-dive."""
+        """Research mode: iterative deep-dive with context accumulation."""
         researcher = ExpertRegistry.get("researcher") or self.expert
+        max_rounds = strategy.max_rounds or 3
         
         research_prompt = f"""请对以下话题进行深度研究分析。
 
@@ -1032,22 +1097,32 @@ class AIStaff:
 
 使用Markdown格式，数据驱动，给出独立判断。1500字以上。"""
         
-        output_parts = []
+        # 第一轮：初始研究
         response, stats = self.chat_single(research_prompt, expert=researcher)
-        output_parts.append(f"# 深度研究报告\n\n{response}\n")
         
-        followups = strategy.auto_followups or [
-            "进一步深挖关键技术细节或争议点。",
-            "有哪些认知误区？请纠正并给出正确理解。",
-            "给出具体行动指南：入门路径、工具推荐、避坑建议。"
+        # 后续追问：带上下文累积
+        followup_prompts = [
+            "基于以上分析，请进一步深挖关键技术细节和争议点，给出更深入的技术剖析。",
+            "有哪些常见的认知误区？请纠正并给出正确理解，避免误导。",
+            "给出具体行动指南：入门路径、工具推荐、避坑建议。",
         ]
         
-        for i, fq in enumerate(followups[:strategy.max_rounds - 1]):
+        output_parts = [f"# 深度研究报告\n\n{response}\n"]
+        accumulated_context = response  # 上下文累积
+        
+        for i in range(min(max_rounds - 1, len(followup_prompts))):
             try:
-                resp, s = self.chat_single(fq, expert=researcher)
+                # 追问时把之前的回答作为上下文
+                followup_with_ctx = (
+                    f"## 前期研究内容\n{accumulated_context[:2000]}\n\n"
+                    f"---\n## 追问方向\n{followup_prompts[i]}"
+                )
+                resp, s = self.chat_single(followup_with_ctx, expert=researcher)
                 output_parts.append(f"\n## 追问{i+1}\n\n{resp}\n")
-                time.sleep(1)
-            except Exception:
+                # 累积上下文（截断防止超长）
+                accumulated_context = f"{accumulated_context[-1000:]}\n\n{resp[:1000]}"
+            except Exception as e:
+                log.warn(f"Research followup {i+1} failed: {str(e)[:60]}")
                 break
         
         return "\n".join(output_parts)
@@ -1222,11 +1297,15 @@ class AIStaff:
         return _from_env(cls, model=model)
 
     @classmethod
-    def quick_start(cls, api_key: str = "", provider: str = "gemini",
+    def quick_start(cls, api_key: str = "", provider: str = "auto",
                     proxy: str = "", model: str = "",
                     auto_detect: bool = True,
                     extra_keys: dict = None) -> 'AIStaff':
-        """V4: 快速启动（委托给startup模块）"""
+        """V4: 快速启动（委托给startup模块）
+        
+        Args:
+            provider: "auto"(自动发现) | "gemini" | "openai" | "deepseek" | "ollama"
+        """
         from .startup import quick_start as _quick_start
         return _quick_start(cls, api_key=api_key, provider=provider,
                            proxy=proxy, model=model, auto_detect=auto_detect,
@@ -1386,84 +1465,8 @@ staff = AIStaff.from_config_file("config.yaml")
 - Python: >= 3.10
 """
 
-    # ═══ V4: AUTO_RUN_V2 + IMPROVE_SELF (instance methods) ═══
 
-    def auto_run_v2(self, user_input: str, output_dir: str = "") -> CollaborationResult:
-        """
-        V4 ENHANCED auto_run: Uses WorkflowEngine V2 for LLM-generated DAG execution.
-        
-        Falls back to V3's auto_run if V2 fails.
-        """
-        total_start = time.time()
-        
-        try:
-            gen, exe = self._get_wf()
-            experts = ExpertRegistry.list_all()
-            
-            hints = {}
-            if len(user_input) < 50:
-                hints["max_steps"] = 2
-                hints["complexity_hint"] = "simple"
-            elif len(user_input) > 300:
-                hints["complexity_hint"] = "complex"
-
-            graph = gen.generate(user_input, experts, constraints=hints)
-            final_output, exec_stats = exe.execute(graph, user_input, self.session_id)
-            
-            wf_meta = exec_stats.get("graph_metadata", {})
-            
-            result = CollaborationResult(
-                goal=user_input,
-                strategy_mode=f"v2_dag_{wf_meta.get('complexity', '?')}",
-                experts_used=list(set(n.expert_id for n in graph.nodes)),
-                deliverables={
-                    "output.md": final_output,
-                    "workflow_info.json": json.dumps({
-                        "goal": graph.goal,
-                        "nodes": [{"id": n.node_id, "expert": n.expert_id,
-                                  "action": n.action} for n in graph.nodes],
-                        "edges": graph.edges,
-                        "reasoning": wf_meta.get("reasoning", ""),
-                    }, ensure_ascii=False, indent=2),
-                },
-                transcript=(
-                    f"V2 Dynamic DAG Workflow\n"
-                    f"Complexity: {wf_meta.get('complexity', '?')}\n"
-                    f"Reasoning: {wf_meta.get('reasoning', 'N/A')}\n"
-                    f"Nodes: {len(graph.nodes)} | Edges: {len(graph.edges)}\n\n---\n\n"
-                    f"{final_output[:800]}{'...(truncated)' if len(final_output)>800 else ''}"
-                ),
-                quality_score=self._estimate_quality(final_output),
-                total_time_sec=exec_stats.get("total_time", time.time() - total_start),
-                rounds_used=1,
-                total_tokens=0,
-            )
-            result.status = "success"
-            
-            # Trigger self-improvement hook
-            si = self._get_si()
-            si.on_task_complete(result)
-            
-        except Exception as e:
-            print(f"  ⚠️ [auto_v2] V2失败 ({type(e).__name__}), 回退到V3...")
-            return self.auto_run(user_input, output_dir=output_dir)
-
-        if not output_dir:
-            safe_name = re.sub(r'[\\/:*?"<>|]', '_', user_input[:25])
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            output_dir = os.path.join(os.getcwd(), f'ai_staff_v4_{safe_name}_{timestamp}')
-        
-        saved_files = result.save(output_dir)
-        print(f"\n  💾 V2结果已保存: {output_dir}/ ({len(saved_files)}个文件)")
-        return result
-
-    def improve_self(self, force: bool = False) -> str:
-        """Manually trigger a self-reflection cycle."""
-        si = self._get_si()
-        if force:
-            return si.manual_improve()
-        si._trigger_reflection()
-        return si.get_log()
+    # ═══ V5: AI↔AI 闭环协作 (主力执行路径) ═══
 
     def _estimate_quality(self, text: str) -> float:
         """Rough quality estimate (0-10) without calling LLM."""
@@ -1500,8 +1503,8 @@ staff = AIStaff.from_config_file("config.yaml")
         classifier = TaskClassifier()
         strategy = classifier.classify(user_input)
         
-        print(f"\n  📋 V5策略: {strategy.display_name} ({strategy.mode})")
-        print(f"     专家: {', '.join(strategy.experts)} | 需要审查: {strategy.needs_review}")
+        log.divider(f"V5策略: {strategy.display_name} ({strategy.mode})")
+        log.system(f"专家: {', '.join(strategy.experts)} | 需要审查: {strategy.needs_review}")
         
         # Step 2: 构建路由上下文
         from ..agents.collab_loop import RouteContext
@@ -1539,6 +1542,7 @@ staff = AIStaff.from_config_file("config.yaml")
             quality_score=collab_stats.get("final_score", 0) / 10.0,  # 转为0-10
             rounds_used=collab_stats.get("iterations", 1),
             total_time_sec=total_time,
+            total_tokens=collab_stats.get("total_tokens", 0),
             experts_used=strategy.experts.copy(),
         )
         
@@ -1557,18 +1561,12 @@ staff = AIStaff.from_config_file("config.yaml")
             output_dir = os.path.join(os.getcwd(), f'ai_staff_v5_{safe_name}_{timestamp}')
         
         saved_files = result.save(output_dir)
-        print(f"\n  💾 V5结果已保存: {output_dir}/ ({len(saved_files)}个文件)")
-        print(f"     最终评分: {collab_stats.get('final_score', 'N/A')}/100")
-        print(f"     迭代次数: {collab_stats.get('iterations', 1)}")
-        print(f"     总耗时: {total_time:.1f}s")
+        log.success(f"V5结果已保存: {output_dir}/ ({len(saved_files)}个文件)")
+        log.reviewer(f"最终评分: {collab_stats.get('final_score', 'N/A')}/100")
+        log.system(f"迭代次数: {collab_stats.get('iterations', 1)} | 总耗时: {total_time:.1f}s")
+        log.budget(tokens=collab_stats.get('total_tokens', 0))
         
-        # 触发自改进（仅复杂任务）
-        if strategy.mode not in ("direct",) and result.quality_score < 8.0:
-            try:
-                si = self._get_si()
-                si.on_task_complete(result)
-            except Exception as e:
-                print(f"     [self-improve] skip: {e}")
+        # V4.1: self_improve已移除，不再触发自改进
         
         return result
     

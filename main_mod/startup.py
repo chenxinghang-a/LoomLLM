@@ -13,41 +13,42 @@ from __future__ import annotations
 import os, re, json
 from typing import Optional
 
+# 从SmartInit的PROVIDER_DEFS自动生成模板，不再手动维护两份
+from ..backends.smart_init import PROVIDER_DEFS
 
-# Provider预设模板
-PROVIDER_TEMPLATES = {
-    "gemini": {
-        "name": "Gemini (Google)",
-        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-        "model": "gemini-2.5-flash-lite",
-        "env_keys": ["GEMINI_API_KEY", "GOOGLE_API_KEY", "AI_STAFF_API_KEY", "AI_STAFF_GEMINI_KEY"],
-        "tier": "free",
-        "max_rpm": 15,
-    },
-    "openai": {
-        "name": "OpenAI",
-        "base_url": "https://api.openai.com/v1",
-        "model": "gpt-4o-mini",
-        "env_keys": ["OPENAI_API_KEY", "AI_STAFF_OPENAI_KEY"],
-        "tier": "cheap",
-    },
-    "deepseek": {
-        "name": "DeepSeek",
-        "base_url": "https://api.deepseek.com",
-        "model": "deepseek-chat",
-        "env_keys": ["DEEPSEEK_API_KEY"],
-        "tier": "cheap",
-    },
-    "ollama": {
-        "name": "Ollama (Local)",
-        "base_url": "http://localhost:11434/v1",
-        "model": "qwen2.5:7b",
-        "api_key": "ollama",
-        "tier": "free",
-        "local": True,
-        "env_keys": [],
-    },
-}
+def _build_templates_from_defs() -> dict:
+    """从PROVIDER_DEFS自动构建PROVIDER_TEMPLATES，消除冗余"""
+    templates = {}
+    for provider, pdef in PROVIDER_DEFS.items():
+        models = pdef.get("known_models", [])
+        # 找默认模型：优先free/cheap → 第一个
+        best_model = ""
+        for m in models:
+            if m[1] in ("free", "cheap"):
+                best_model = m[0]
+                break
+        if not best_model and models:
+            best_model = models[0][0]
+        
+        # 找默认tier
+        best_tier = "standard"
+        if models:
+            best_tier = models[0][1] if models[0][1] in ("free", "cheap") else "standard"
+        
+        templates[provider] = {
+            "name": provider.capitalize(),
+            "base_url": pdef["base_url"],
+            "model": best_model,
+            "env_keys": pdef.get("env_keys", []),
+            "tier": best_tier,
+            "needs_proxy": pdef.get("needs_proxy", False),
+        }
+        if pdef.get("local"):
+            templates[provider]["local"] = True
+            templates[provider]["api_key"] = "ollama" if provider == "ollama" else ""
+    return templates
+
+PROVIDER_TEMPLATES = _build_templates_from_defs()
 
 
 def from_env(cls, model: str = "") -> 'AIStaff':
@@ -148,7 +149,7 @@ def from_env(cls, model: str = "") -> 'AIStaff':
         ) from e
 
 
-def quick_start(cls, api_key: str = "", provider: str = "gemini",
+def quick_start(cls, api_key: str = "", provider: str = "auto",
                 proxy: str = "", model: str = "",
                 auto_detect: bool = True,
                 extra_keys: dict = None) -> 'AIStaff':
@@ -176,8 +177,13 @@ def quick_start(cls, api_key: str = "", provider: str = "gemini",
     from ..backends.smart_init import SmartInit
     
     keys_dict = dict(extra_keys) if extra_keys else {}
-    if api_key and provider not in keys_dict:
-        keys_dict[provider] = api_key
+    if api_key:
+        # auto模式：把key分配到能识别的provider，或传给SmartInit自动匹配
+        if provider != "auto" and provider not in keys_dict:
+            keys_dict[provider] = api_key
+        elif "gemini" not in keys_dict and "openai" not in keys_dict:
+            # 未知key先给SmartInit让它试
+            keys_dict["auto"] = api_key
     
     registry = SmartInit.auto_configure(
         extra_keys=keys_dict if keys_dict else None,
@@ -261,20 +267,21 @@ def discover_and_start(cls, proxy: str = "") -> 'AIStaff':
             for provider_name, api_key in keys_data.items():
                 if api_key and provider_name in PROVIDER_TEMPLATES:
                     tmpl = PROVIDER_TEMPLATES[provider_name]
-                    print(f"  [V4/discover] ✓ Found key for {provider_name} in {keys_file}")
+                    print(f"  [V4/discover] Found key for {provider_name} in {keys_file}")
                     return cls(
                         base_url=tmpl["base_url"], api_key=api_key,
                         model=tmpl.get("model", ""), proxy=proxy,
                     )
                 elif api_key:
-                    # Generic key — try as gemini
-                    print(f"  [V4/discover] ✓ Found key ({provider_name}) in {keys_file}, trying quick_start")
+                    # Unknown provider — try with quick_start auto-detect
+                    print(f"  [V4/discover] Found key ({provider_name}) in {keys_file}, trying quick_start")
                     return cls.quick_start(api_key=api_key, provider=provider_name)
-        except Exception:
+        except Exception as e:
+            print(f"  [V4/discover] keys.json error: {type(e).__name__}: {e}")
             pass
     
     # Nothing found
-    scanned = list(all_env_patterns.keys()) + ["Ollama (localhost:11434)"] + config_paths
+    scanned = list(all_env_patterns.keys()) + ["Ollama (localhost:11434)"] + config_paths + [keys_file]
     raise RuntimeError(
         "V4 discover_and_start() found no available LLM backend.\n"
         f"Scanned: {', '.join(scanned)}\n\n"

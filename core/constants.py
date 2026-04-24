@@ -14,15 +14,15 @@ __all__ = [
 ]
 
 # ── Version ──
-VERSION = "4.0.0"
+VERSION = "4.1.0"
 
 # ── API Defaults ──
 DEFAULT_TIMEOUT = 120          # seconds per API call
 MAX_RETRIES = 2                # retry attempts (429快速失败让上层降级)
 RETRY_DELAY = 1.0              # base delay (秒，429不需要等太久)
 
-DEFAULT_MODEL = "gemini-2.5-flash-lite"
-DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+DEFAULT_MODEL = ""           # No default — must be provided by user or auto-discovered
+DEFAULT_BASE_URL = ""        # No default — provider-specific, set via config or SmartInit
 
 # ── Paths ──
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent

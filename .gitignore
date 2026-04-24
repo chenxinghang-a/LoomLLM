@@ -1,18 +1,41 @@
+# Python
 __pycache__/
-*.pyc
-*.pyo
-.env
-config.yaml
+*.py[cod]
 *.egg-info/
 dist/
 build/
-.venv/
-output/
-ai_staff_output_*/
-ai_staff_v5_*/
-*.log
-.DS_Store
-Thumbs.db
+.eggs/
+
+# Config with secrets
+config.yaml
+.env
+.env.*
+
+# Runtime data
 *.db
+*.sqlite3
+.ai_staff_memory.db
+
+# Cache
 .cache/
 
+# Logs
+output/
+*.log
+*_log.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dev/test scripts (not for public)
+_live_test_*.py
+_quick_validate.py
+_count_code_lines.py
+_count_lines.py

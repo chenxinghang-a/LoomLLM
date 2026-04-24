@@ -1,19 +1,18 @@
 """
-AI-Staff V4.0 — Universal AI Staff Dispatcher
+AI-Staff V4.1 — Personal AI Toolbox
 
-Modular architecture:
-  - core/: Events, Budget, Memory, Validation, Checkpoint
+Simplified architecture (V4.1 cleanup):
+  - core/: Events, Budget, Memory, Validation
   - experts/: Expert Registry, Task Classifier
-  - agents/: Agent Framework (CoT, Executor, Reviewer, Memory, Workflow)
-  - backends/: LLM Client, Multi-Backend Router, Fallback
+  - agents/: CoT, Executor, Reviewer, Memory, CollabLoop (V5)
+  - backends/: LLM Client, Multi-Backend, SmartInit, Fallback
   - main_mod/: AIStaff orchestrator
-  - self_improve/: Self-Improvement Engine
-  - workflow_v2: Dynamic DAG Workflow Engine
-  - skills/: Skill Registry (dynamic discovery & hot-reload)
-  - endpoints/: REST API, MCP Bridge
+
+Removed in V4.1 (moved to deprecated/):
+  - self_improve/, workflow_v2/, skills/, endpoints/, ai_router
 """
 
-__version__ = "4.0.0"
+__version__ = "4.1.0"
 __author__ = "AI-Team"
 
 # Lazy imports — only load when accessed
@@ -34,20 +33,17 @@ def __getattr__(name):
         'ExpertConfig': ('.experts.registry', 'ExpertConfig'),
         'TaskClassifier': ('.experts.classifier', 'TaskClassifier'),
         # Agents
-        'BaseAgent': ('.agents.base', 'BaseAgent'),
         'CoTAgent': ('.agents.cot', 'CoTAgent'),
-        # Backends
-        'LLMClient': ('.backends.client', 'LLMClient'),
-        'MultiLLMClient': ('.backends.multi_client', 'MultiLLMClient'),
-        'ModelRouter': ('.backends.router', 'ModelRouter'),
-        # V4 New
-        'SelfImprovementEngine': ('.self_improve.engine', 'SelfImprovementEngine'),
-        'WorkflowGeneratorV2': ('.workflow_v2.generator', 'WorkflowGeneratorV2'),
-        'WorkflowExecutorV2': ('.workflow_v2.executor', 'WorkflowExecutorV2'),
-        'SkillRegistry': ('.skills.registry', 'SkillRegistry'),
         'CollaborationLoop': ('.agents.collab_loop', 'CollaborationLoop'),
         'RouteContext': ('.agents.collab_loop', 'RouteContext'),
         'StructuredFeedback': ('.agents.collab_loop', 'StructuredFeedback'),
+        # Backends
+        'LLMClient': ('.backends.client', 'LLMClient'),
+        'BackendProfile': ('.backends.profile', 'BackendProfile'),
+        'MultiLLMClient': ('.backends.multi_client', 'MultiLLMClient'),
+        'ModelRouter': ('.backends.router', 'ModelRouter'),
+        'SmartInit': ('.backends.smart_init', 'SmartInit'),
+        'FallbackManager': ('.backends.fallback', 'FallbackManager'),
     }
     
     if name in _imports:
@@ -69,7 +65,7 @@ def from_env(**kwargs):
 def quick_start(prompt: str, **kwargs):
     """One-liner: create staff and run."""
     staff = from_env(**kwargs)
-    return staff.auto_run(prompt)
+    return staff.chat(prompt)
 
 
 def discover_and_start(**kwargs):
@@ -78,18 +74,9 @@ def discover_and_start(**kwargs):
     return AIStaff.discover_and_start(**kwargs)
 
 
-def create_skill_registry(*args, **kwargs):
-    """Create a new skill registry."""
-    from .skills.registry import SkillRegistry, create_builtin_registry
-    if args or kwargs:
-        return SkillRegistry(*args, **kwargs)
-    return create_builtin_registry()
-
-
 __all__ = [
     '__version__', 'AIStaff', 'from_env', 'quick_start', 'discover_and_start',
-    'SkillRegistry', 'create_skill_registry',
-    'SelfImprovementEngine', 'WorkflowGeneratorV2', 'WorkflowExecutorV2',
     'EventBus', 'MemorySystem', 'ExpertRegistry', 'TaskClassifier',
-    'MultiLLMClient', 'ModelRouter',
+    'MultiLLMClient', 'ModelRouter', 'SmartInit', 'FallbackManager',
+    'CollaborationLoop', 'RouteContext', 'StructuredFeedback',
 ]

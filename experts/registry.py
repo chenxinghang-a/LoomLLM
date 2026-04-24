@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 # Intra-package imports
 from ..core.constants import PACKAGE_ROOT
+from ..core.verbose import log
 
 # Expert configs directory
 EXPERTS_DIR = PACKAGE_ROOT / "experts"
@@ -41,7 +42,7 @@ class ExpertRegistry:
         try:
             import yaml
         except ImportError:
-            print("[ExpertRegistry] PyYAML not installed, using built-in experts only")
+            log.warn("PyYAML not installed, using built-in experts only")
             cls._load_builtin()
             return len(cls._experts)
         
@@ -60,7 +61,7 @@ class ExpertRegistry:
                     cls._experts[exp.id] = exp
                     count += 1
             except Exception as e:
-                print(f"  [ExpertRegistry] Failed to load {f.name}: {e}")
+                log.warn(f"Failed to load {f.name}: {e}")
         
         if count == 0:
             cls._load_builtin()
@@ -172,7 +173,7 @@ class ExpertRegistry:
         try:
             import yaml
         except ImportError:
-            print("[ExpertRegistry] Need pyyaml to save expert files")
+            log.warn("Need pyyaml to save expert files")
             return
         
         fname = filename or f"{expert.id}.yaml"
@@ -192,7 +193,7 @@ class ExpertRegistry:
         }
         with open(filepath, 'w', encoding='utf-8') as fh:
             yaml.dump(data, fh, allow_unicode=True, default_flow_style=False)
-            print(f"  [ExpertRegistry] Saved expert '{expert.id}' to {filepath}")
+            log.success(f"Saved expert '{expert.id}' to {filepath}")
 
 
 __all__ = ['ExpertConfig', 'ExpertRegistry', 'EXPERTS_DIR']
