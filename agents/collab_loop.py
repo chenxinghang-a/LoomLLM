@@ -429,18 +429,18 @@ class CollaborationLoop:
                     print(f"     >> REBUTTAL (score={feedback.score}, letting writer defend)")
                     
                     rebuttal_msgs = [
-                        {"role": "system", "content": expert.system_prompt},
+                        {"role": "system", "content": f"{expert.system_prompt}\n你是一位资深领域专家。面对审查批评，你有权为自己的选择辩护，但必须以事实和逻辑为依据。"},
                         {"role": "user", "content": f"""你刚才完成的任务：{task}
 
 审查员给了 {feedback.score}/100 分，指出了以下问题：
 {chr(10).join(f'- {i}' for i in feedback.issues)}
 
-请简要辩解（2-4句话）：
-1. 你是否同意审查员的判断？
-2. 如果不同意，你的理由是什么？
-3. 如果同意，你打算怎么改？
+请从专业角度回应（2-4句话）：
+1. 你是否同意审查员的判断？对每个问题逐一回应。
+2. 如果不同意，请引用你输出中的具体内容作为证据。
+3. 如果同意，直接承认并提出修改方案。
 
-注意：诚实回答。如果你的输出确实有问题，直接承认并提出修改方案。只有在你确实有合理理由时才辩解。"""},
+要求：以事实为依据，不要讨好审查员。如果你有合理理由，坚定地辩护。"""},
                     ]
                     
                     rebuttal_text, _ = self._call_with_fallback(
@@ -461,16 +461,18 @@ class CollaborationLoop:
                         
                         # Reviewer看到辩解后重新评估
                         rejudge_msgs = [
-                            {"role": "system", "content": "你是审查员。执行者对你的批评进行了辩解。请重新评估。"},
+                            {"role": "system", "content": "你是审查员。执行者对你的批评进行了辩解。请公正重新评估，如果辩解有理有据，请务必上调分数，不要因为之前给过低分而固执己见。"},
                             {"role": "user", "content": f"""你之前给了 {feedback.score}/100 分，问题：
 {chr(10).join(f'- {i}' for i in feedback.issues)}
 
 执行者的辩解：
 {rebuttal_text}
 
+请对比你的原始批评与执行者的辩解，说明为何该批评在辩解后变得无效或部分无效。
+
 请重新评估：
-1. 执行者的辩解是否合理？
-2. 是否需要调整评分？如果辩解有理，可上调5-15分。
+1. 执行者的辩解是否合理？哪些批评确实站不住脚？
+2. 是否需要调整评分？
 3. 哪些问题确实需要改，哪些可以接受？
 
 只输出JSON：{{"new_score": <int>, "accepted_rebuttals": ["接受的辩解1"], "remaining_issues": ["仍需修改1"]}}"""},
@@ -492,8 +494,12 @@ class CollaborationLoop:
                                     rj = json.loads(json_match.group())
                                     new_score = rj.get("new_score", feedback.score)
                                     if new_score > feedback.score:
-                                        print(f"     >> REJUDGE: {feedback.score} -> {new_score} (rebuttal accepted)")
-                                        feedback.score = min(100, new_score)
+                                        # 上调幅度递减：第1轮最多15分，后续轮最多5分
+                                        max_boost = 15 if iteration == 0 else 5
+                                        actual_boost = min(max_boost, new_score - feedback.score)
+                                        adjusted_score = feedback.score + actual_boost
+                                        print(f"     >> REJUDGE: {feedback.score} -> {adjusted_score} (rebuttal accepted, boost={actual_boost})")
+                                        feedback.score = min(100, adjusted_score)
                                         feedback.passed = new_score >= route_ctx.quality_threshold
                                         remaining = rj.get("remaining_issues", feedback.issues)
                                         if remaining:
