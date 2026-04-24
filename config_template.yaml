@@ -1,0 +1,108 @@
+# ═══════════════════════════════════════════════════════════
+#  AI-Staff V4 配置文件
+# ═══════════════════════════════════════════════════════════
+#
+#  使用方式：
+#    1. 复制此文件为 config.yaml (或任意路径)
+#    2. 填写你的 API 信息
+#    3. 运行: python -m ai_staff_v4 --config config.yaml chat -p "你好"
+#
+#  或环境变量模式（无需配置文件）：
+#    set GEMINI_API_KEY=your-key
+#    python -c "from ai_staff_v4 import AIStaff; s=AIStaff.from_env(); print(s.chat('hello'))"
+#
+
+# ── 默认模型 ──
+default_model: "gemini-2.5-flash"
+
+# ── 全局设置 ──
+settings:
+  proxy: ""                          # HTTP代理, 如 http://127.0.0.1:7890
+  default_expert: "generalist"        # 默认专家角色
+  timeout: 120                        # API超时(秒)
+  max_retries: 3                      # 重试次数
+  language: "zh-CN"                   # 界面语言
+
+# ── LLM 后端配置（支持多个） ──
+#  每个 profile 是一个独立的 LLM 接入点
+#  系统会根据任务类型自动选择最优后端
+profiles:
+  # ── 主力模型（推荐 Gemini Flash, 便宜快速）──
+  gemini_flash:
+    provider: "gemini"
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
+    api_key: "${GEMINI_API_KEY}"       # 环境变量自动替换
+    model: "gemini-2.5-flash"
+    tier: "standard"                    # standard | premium | budget
+    priority: 10                         # 数值越高优先
+
+  # ── 备选：Gemini Pro（复杂推理）──
+  gemini_pro:
+    provider: "gemini"
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
+    api_key: "${GEMINI_API_KEY}"
+    model: "gemini-2.5-pro"
+    tier: "premium"
+    priority: 5
+
+  # ── OpenAI 兼容（通用）──
+  # openai_compat:
+  #   provider: "openai"
+  #   base_url: "https://api.openai.com/v1"
+  #   api_key: "${OPENAI_API_KEY}"
+  #   model: "gpt-4o-mini"
+  #   tier: "standard"
+  #   priority: 8
+
+  # ── Ollama 本地模型（免费，需先启动 ollama serve）──
+  # ollama:
+  #   provider: "ollama"
+  #   base_url: "http://localhost:11434/v1"
+  #   api_key: "ollama"
+  #   model: "qwen3:8b"
+  #   tier: "budget"
+  #   priority: 3
+
+  # ── DeepSeek (性价比之王)──
+  # deepseek:
+  #   provider: "deepseek"
+  #   base_url: "https://api.deepseek.com/v1"
+  #   api_key: "${DEEPSEEK_API_KEY}"
+  #   model: "deepseek-chat"
+  #   tier: "budget"
+  #   priority: 7
+
+# ── Token 预算管理 ──
+budget:
+  daily_limit_usd: 1.0               # 每日预算上限($)
+  warn_threshold: 0.7                 # 警告阈值(70%)
+  enable_tracking: true               # 是否追踪token用量
+
+# ── 自我改进引擎 ──
+self_improve:
+  enabled: true                       # 开启自动反思
+  reflection_interval: 10             # 每N次任务触发一次反思
+  quality_threshold: 6.0              # 低于此分数触发反思(0-10)
+
+# ── 工作流引擎 V2 ──
+workflow:
+  max_steps: 8                        # DAG最大节点数
+  prefer_parallel: true               # 优先并行执行
+  fallback_mode: "linear"             # LLM失败时的回退策略
+
+# ── 内存/记忆系统 ──
+memory:
+  db_path: ".ai_staff_memory.db"      # SQLite 数据库路径
+  max_history_per_session: 100        # 每个会话最大记录数
+  auto_summarize_every: 20            # 每N轮自动摘要
+
+# ── REST API 服务端（可选）──
+api:
+  host: "127.0.0.1"
+  port: 19876
+  enabled: false                      # 设为true启动HTTP服务
+
+# ── MCP Bridge（可选）──
+mcp:
+  enabled: false
+  transport: "stdio"                  # stdio | http | sse
