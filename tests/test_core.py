@@ -1,13 +1,22 @@
 """
 AI-Staff V4 核心功能单元测试
-Run: python -m pytest tests/ -v  (or: python tests/test_core.py)
+Run from project root:  python -m unittest ai_staff_v4.tests.test_core -v
+Run from package dir:   python tests/test_core.py
+No API key needed — all tests are local unit tests.
 """
 import sys
 import os
 import unittest
 
-# Ensure package importable
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Ensure package importable from both root and package dir
+# From root: python -m unittest ai_staff_v4.tests.test_core
+# From package dir: python tests/test_core.py
+_pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_parent_root = os.path.dirname(_pkg_root)
+if os.path.isfile(os.path.join(_parent_root, "ai_staff_v4", "__init__.py")):
+    sys.path.insert(0, _parent_root)  # Claw/ → finds ai_staff_v4 as package
+else:
+    sys.path.insert(0, _pkg_root)  # fallback: ai_staff_v4/ itself
 
 
 class TestVerboseLogger(unittest.TestCase):

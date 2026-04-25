@@ -195,6 +195,26 @@ staff.chat("Add authentication to my app")  # Knows context from previous chat
 pip install httpx pyyaml
 ```
 
+### First-Time Setup (Interactive Wizard)
+```bash
+python -m ai_staff_v4 setup
+```
+This launches the setup wizard that:
+- Shows all supported providers (with key registration links)
+- Lets you enter your API key interactively
+- Verifies connectivity immediately
+- Suggests permanent environment variable setup
+
+**Don't have an API key yet?** Pick one:
+| Provider | Get Key | Free Tier? | Proxy Needed? |
+|----------|---------|------------|---------------|
+| DeepSeek | [platform.deepseek.com](https://platform.deepseek.com/api_keys) | ❌ | ❌ |
+| Zhipu GLM | [open.bigmodel.cn](https://open.bigmodel.cn/usercenter/apikeys) | ✅ glm-4-flash | ❌ |
+| Qwen | [dashscope.console.aliyun.com](https://dashscope.console.aliyun.com/apiKey) | ✅ | ❌ |
+| Moonshot | [platform.moonshot.cn](https://platform.moonshot.cn/console/api-keys) | ❌ | ❌ |
+| Gemini | [aistudio.google.com](https://aistudio.google.com/apikey) | ✅ flash-lite | ✅ |
+| OpenAI | [platform.openai.com](https://platform.openai.com/api-keys) | ❌ | ✅ |
+
 ### Run
 ```python
 from ai_staff_v4 import AIStaff
@@ -204,7 +224,7 @@ from ai_staff_v4 import AIStaff
 staff = AIStaff.from_env()
 
 # Option 2: Direct key
-staff = AIStaff.quick_start("your-api-key", provider="gemini")  # or "deepseek", "openai", ...
+staff = AIStaff.quick_start("your-api-key", provider="deepseek")  # or "gemini", "openai", "moonshot", ...
 
 # Option 3: YAML config (multi-backend)
 staff = AIStaff.from_config_file("config.yaml")
@@ -359,10 +379,13 @@ memory:
 ## Testing
 
 ```bash
-# Quick verify
+# Unit tests (no API key needed)
+python -m unittest ai_staff_v4.tests.test_core -v
+
+# Quick verify import
 python -c "from ai_staff_v4 import AIStaff; print('OK')"
 
-# Run examples
+# Run examples (API key required)
 python examples/simple.py
 python examples/research_flow.py
 python examples/expert_task.py
