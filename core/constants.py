@@ -1,5 +1,5 @@
 """
-AI-Staff V4 Global Constants & Shared Configuration.
+LoomLLM Global Constants & Shared Configuration.
 
 Central location for all magic numbers, defaults, and version info.
 Every module imports from here — no more undefined name errors.
@@ -14,7 +14,7 @@ __all__ = [
 ]
 
 # ── Version ──
-VERSION = "4.1.0"
+VERSION = "1.0.0"
 
 # ── API Defaults ──
 DEFAULT_TIMEOUT = 120          # seconds per API call

@@ -1,233 +1,183 @@
-# 🦞 AI-Staff V4 — 全自动AI协作工作站
+# LoomLLM — The Iterative LLM Framework
 
-> 给任务 → 自动选专家 → 自动干活 → 自动审查 → 质量不过？自动重写
+> Write → Review → Refine → Repeat. Automatically.
 
-**3行代码启动，零配置：**
+**One function call, 10 providers, zero config.**
 
 ```python
 from ai_staff_v4 import AIStaff
 
-staff = AIStaff.from_env()          # 自动扫描API key，零配置
-answer = staff.chat("写个快排")     # 自动分类→选专家→闭环协作
+staff = AIStaff.from_env()          # Auto-detect API keys, zero config
+answer = staff.chat("Write a quicksort")  # Auto-classify → select expert → iterate until quality threshold
 ```
 
-## ⚡ 为什么不用LangChain/CrewAI？
+## Why LoomLLM?
 
-| | LangChain | CrewAI | **AI-Staff** |
+Existing frameworks make you **assemble your own pipeline**. LoomLLM **is** the pipeline.
+
+| | LangChain | CrewAI | **LoomLLM** |
 |---|---|---|---|
-| 启动 | 写50行chain | 配4个yaml | **3行代码** |
-| 质量保障 | 自己写 | 手动配 | **自动审查+重写闭环** |
-| 多模型 | 单模型 | 单模型 | **快模型写+强模型查** |
-| 成本感知 | ❌ | ❌ | **实时Token+费用显示** |
-| 降级容错 | 自己写 | ❌ | **429自动切后端** |
+| Setup | Write 50 lines of chain | Configure 4 YAML files | **3 lines of code** |
+| Quality control | Build it yourself | Manual configuration | **Auto-review + rewrite loop** |
+| Multi-model | Single model | Single model | **Fast model writes, strong model reviews** |
+| Cost awareness | ❌ | ❌ | **Real-time token + cost tracking** |
+| Graceful degradation | Write it yourself | ❌ | **Auto-fallback on 429 errors** |
 
-**一句话定位**：LangChain=积木，CrewAI=流水线，AI-Staff=全自动工作站。
+### The Core Innovation: Iterative Refinement Loop
 
-## 🎯 核心特性
-
-### 1. 零配置启动
-```python
-# 设置任一Provider的API Key，自动扫描所有可用模型
-# 支持环境变量: GEMINI_API_KEY, DEEPSEEK_API_KEY, OPENAI_API_KEY 等
-set GEMINI_API_KEY=your-key        # 或 DEEPSEEK_API_KEY, ZHIPU_API_KEY...
-staff = AIStaff.from_env()
-# → 自动发现: gemini-2.5-flash-lite(free), deepseek-chat(cheap)...
+```
+Writer (fast/cheap model) → Reviewer (strong model) → Score < 80? → Rewrite with feedback → Repeat
 ```
 
-### 2. V5闭环协作（核心杀手锏）
-```
-Writer写初稿 → Reviewer审查 → 分数<80? → Writer带反馈重写 → Reviewer再查 → ...
-```
-- **快模型写，强模型查**（节省50%成本）
-- **结构化反馈**：问题、建议、优点，不是笼统的"请改进"
-- **辩论协议**：Writer可以对Reviewer的批评辩解，分数可能上调
-- **自动终止**：达到质量阈值或最大迭代次数才停
+- **Cost-efficient**: Fast model drafts, strong model inspects — saves ~50% tokens
+- **Structured feedback**: Specific issues, suggestions, and strengths — not vague "please improve"
+- **Debate protocol**: Writer can argue against reviewer criticism; score may adjust upward
+- **Auto-termination**: Stops when quality threshold met or max iterations reached
 
-### 3. 智能路由
-```python
-staff.chat("1+1等于几")        # → 快速问答，1次调用
-staff.chat("写个快排")          # → 代码模式，编码+审查
-staff.chat("AI趋势分析")        # → 研究模式，多轮追问
-staff.chat("React vs Vue")      # → 决策模式，多维度分析
-```
-**不需要手动选模式**，AI-Staff自动分类+路由。
+### 10 Providers, One API
 
-### 4. 10个Provider，开箱即用
-| Provider | 直连 | 免费 | 需代理 |
-|----------|------|------|--------|
-| Gemini | ❌ | ✅ flash-lite | ✅ |
+| Provider | Direct Connect | Free Tier | Needs Proxy |
+|----------|---------------|-----------|-------------|
 | DeepSeek | ✅ | ❌ | ❌ |
-| 智谱GLM | ✅ | ✅ glm-4-flash | ❌ |
-| 硅基流动 | ✅ | ✅ Qwen2.5-7B | ❌ |
-| Kimi | ✅ | ❌ | ❌ |
-| 通义千问 | ✅ | ❌ | ❌ |
+| Zhipu GLM | ✅ | ✅ glm-4-flash | ❌ |
+| SiliconFlow | ✅ | ✅ Qwen2.5-7B | ❌ |
+| Moonshot (Kimi) | ✅ | ❌ | ❌ |
+| Qwen (DashScope) | ✅ | ❌ | ❌ |
+| Gemini | ❌ | ✅ flash-lite | ✅ |
 | OpenAI | ❌ | ❌ | ✅ |
 | Groq | ❌ | ✅ | ✅ |
 | Anthropic | ❌ | ❌ | ✅ |
-| Ollama | 本地 | ✅ | ❌ |
+| Ollama | Local | ✅ | ❌ |
 
-### 5. Token成本实时显示
-```
-  💰 Budget     gemini-3.1-flash-lite | 1,234 tok | free  ←  累计: 5,678 tokens (3 calls) | 2,345 tok/s | free | 2.4s
-```
+All providers use the **OpenAI-compatible API format**. No vendor lock-in, no proprietary APIs.
 
-### 6. 彩色日志，过程可视化
-```
-  🟢 Writer      开始 #1
-  🔵 Reviewer    评分:85/100 | 1.2s | 2,345ch
-  ✅ Done        PASSED (score=85 >= 80)
-```
+## Quick Start
 
-## 🚀 Quick Start
-
-### 安装
+### Install
 ```bash
 pip install httpx pyyaml
 ```
 
-### 最简示例
+### Run
 ```python
 from ai_staff_v4 import AIStaff
 
-# 方式1: 环境变量（推荐）
-# set GEMINI_API_KEY=your-key   或  set DEEPSEEK_API_KEY=your-key
+# Option 1: Environment variable (recommended)
+# Set any provider key: GEMINI_API_KEY, DEEPSEEK_API_KEY, OPENAI_API_KEY, etc.
 staff = AIStaff.from_env()
 
-# 方式2: 直接传key
-staff = AIStaff.quick_start("your-api-key", provider="gemini")  # provider可选: gemini/deepseek/openai/...
+# Option 2: Direct key
+staff = AIStaff.quick_start("your-api-key", provider="gemini")  # or "deepseek", "openai", ...
 
-# 方式3: YAML配置（多后端）
+# Option 3: YAML config (multi-backend)
 staff = AIStaff.from_config_file("config.yaml")
 
-# 开聊
-answer = staff.chat("你好")
+# Chat
+answer = staff.chat("Hello")
 ```
 
-### 指定模式
+### Specify Mode
 ```python
-staff.chat("写个快排", mode="code")        # 代码+审查
-staff.chat("AI趋势", mode="research")      # 多轮研究
-staff.chat("React vs Vue", mode="decision")# 多维决策
-staff.chat("写个slogan", mode="creative")  # 创意+审查
+staff.chat("Write quicksort", mode="code")         # Code + review
+staff.chat("AI trend analysis", mode="research")    # Multi-turn research
+staff.chat("React vs Vue", mode="decision")         # Multi-dimensional analysis
+staff.chat("Write a slogan", mode="creative")       # Creative + review
 ```
 
-### 查看完整结果
+### Inspect Results
 ```python
-result = staff.chat("写个快排", mode="code", return_details=True)
-print(f"质量评分: {result.quality_score}/10")
-print(f"迭代次数: {result.rounds_used}")
-print(f"Token消耗: {result.total_tokens:,}")
-print(f"参与专家: {result.experts_used}")
+result = staff.chat("Write quicksort", mode="code", return_details=True)
+print(f"Quality score: {result.quality_score}/100")
+print(f"Iterations: {result.rounds_used}")
+print(f"Tokens used: {result.total_tokens:,}")
+print(f"Experts involved: {result.experts_used}")
 ```
 
-## 📁 项目结构
+## How It Works
+
+```
+User Input → chat()
+  │
+  ├─ TaskClassifier (auto-detect task type)
+  │   ├─ direct (simple)  → Single call
+  │   ├─ code (coding)    → Coder + Critic loop
+  │   ├─ research (study) → Multi-turn inquiry
+  │   └─ complex (hard)   → Full V5 collab loop
+  │
+  └─ V5 CollabLoop
+      ├─ Writer (fast model) drafts
+      ├─ Reviewer (strong model) scores & gives feedback
+      ├─ Score < 80? → Writer rewrites with feedback
+      ├─ Debate protocol: Writer can argue back
+      └─ Auto-terminate: Quality met or timeout
+```
+
+## Configuration
+
+### Single environment variable (simplest)
+```bash
+# Any one of these works:
+export GEMINI_API_KEY=your-key        # Gemini (free flash-lite)
+export DEEPSEEK_API_KEY=your-key      # DeepSeek (best value)
+export ZHIPU_API_KEY=your-key         # Zhipu GLM (glm-4-flash is free)
+```
+
+### config.yaml (multi-backend)
+Copy `config_template.yaml` and fill in your keys. 10 providers pre-configured, uncomment what you need.
+
+## Project Structure
 
 ```
 ai_staff_v4/
-├── core/           # 核心基础设施
-│   ├── verbose.py  # 🆕 彩色日志+Token成本显示
-│   ├── budget.py   # Token预算管理
-│   ├── events.py   # 事件总线
-│   ├── memory.py   # SQLite持久化记忆
-│   └── validation.py # 输出校验
-├── experts/        # 专家角色
-│   ├── experts.yaml # 🆕 用户可编辑的专家配置
-│   ├── registry.py  # 专家注册表
-│   └── classifier.py # 任务自动分类
-├── agents/         # AI子Agent
-│   ├── collab_loop.py # V5闭环协作引擎
-│   ├── cot.py       # 思维链规划
-│   ├── executor.py  # 执行Agent
-│   └── reviewer.py  # 审查Agent
-├── backends/       # LLM后端
-│   ├── client.py    # 统一API客户端
-│   ├── smart_init.py # 零配置自动扫描
-│   ├── multi_client.py # 多后端统一管理
-│   ├── router.py    # 智能路由
-│   └── fallback.py  # 级联降级
+├── core/           # Infrastructure
+│   ├── verbose.py  # Colorized logging + token cost display
+│   ├── budget.py   # Token budget management
+│   ├── events.py   # Event bus
+│   ├── memory.py   # SQLite persistent memory
+│   └── validation.py # Output validation
+├── experts/        # Expert roles
+│   ├── experts.yaml # User-editable expert config
+│   ├── registry.py  # Expert registry
+│   └── classifier.py # Task auto-classification
+├── agents/         # AI sub-agents
+│   ├── collab_loop.py # V5 iterative collaboration engine
+│   ├── cot.py       # Chain-of-thought planner
+│   ├── executor.py  # Execution agent
+│   └── reviewer.py  # Review agent
+├── backends/       # LLM backends
+│   ├── client.py    # Unified API client (OpenAI-compatible)
+│   ├── smart_init.py # Zero-config auto-discovery
+│   ├── multi_client.py # Multi-backend manager
+│   ├── router.py    # Smart routing
+│   └── fallback.py  # Cascade fallback
 ├── main_mod/
-│   ├── staff.py     # AIStaff核心编排器
-│   └── startup.py   # 零配置启动逻辑
-├── examples/       # 🆕 3个最小示例
-│   ├── simple.py    # 3行代码启动
-│   ├── research_flow.py # V5闭环研究
-│   └── expert_task.py   # 代码+审查
-├── config_template.yaml # 配置模板（10个Provider）
+│   ├── staff.py     # AIStaff orchestrator
+│   └── startup.py   # Zero-config startup
+├── examples/
+│   ├── simple.py    # 3-line quickstart
+│   ├── research_flow.py # V5 research loop
+│   └── expert_task.py   # Code + review
+├── config_template.yaml # Config template (10 providers)
 └── README.md
 ```
 
-## 🔧 配置
-
-### 单环境变量（最简）
-```bash
-# 任选一个Provider，设置对应环境变量即可
-set GEMINI_API_KEY=your-key        # Gemini (免费flash-lite)
-set DEEPSEEK_API_KEY=your-key      # DeepSeek (性价比高)
-set ZHIPU_API_KEY=your-key         # 智谱GLM (glm-4-flash免费)
-```
-
-### config.yaml（多后端）
-```yaml
-settings:
-  proxy: ""                          # 海外Provider需设代理
-  default_expert: generalist
-
-profiles:
-  deepseek:                          # 国内直连，无需代理
-    base_url: "https://api.deepseek.com/v1"
-    api_key: "${DEEPSEEK_API_KEY}"
-    model: "deepseek-chat"
-    tier: cheap
-    priority: 9
-
-  gemini_flash:                      # 需代理
-    base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
-    api_key: "${GEMINI_API_KEY}"
-    model: "gemini-2.5-flash-lite"
-    tier: free
-    priority: 10
-```
-
-### 自定义专家
-编辑 `experts/experts.yaml`，无需改代码：
-```yaml
-- id: my_expert
-  name: 我的专家
-  system_prompt: "你是一个..."
-  temperature: 0.5
-  require_review: true
-```
-
-## 🧪 测试
+## Testing
 
 ```bash
-# 快速验证
+# Quick verify
 python -c "from ai_staff_v4 import AIStaff; print('OK')"
 
-# 跑示例
+# Run examples
 python examples/simple.py
 python examples/research_flow.py
 python examples/expert_task.py
 ```
 
-## 📊 架构图
+## Requirements
 
-```
-用户输入 → chat()
-  │
-  ├─ TaskClassifier 自动分类
-  │   ├─ direct(简单) → 单次调用
-  │   ├─ code(代码)   → Coder + Critic
-  │   ├─ research(研究)→ 多轮追问
-  │   └─ complex(复杂) → V5闭环
-  │
-  └─ V5 CollabLoop
-      ├─ Writer(快模型) 写初稿
-      ├─ Reviewer(强模型) 审查
-      ├─ 分数 < 80? → Writer带反馈重写
-      ├─ 辩论协议: Writer可辩解
-      └─ 自动终止: 达标或超时
-```
+- Python 3.10+
+- httpx >= 0.27
+- pyyaml >= 6.0
 
 ## License
 

@@ -1,19 +1,18 @@
 """
-AI-Staff V4.1 — Personal AI Toolbox
+LoomLLM — The Iterative LLM Framework
 
-Simplified architecture (V4.1 cleanup):
+Weave multiple LLM providers into a self-improving collaboration loop:
   - core/: Events, Budget, Memory, Validation
   - experts/: Expert Registry, Task Classifier
   - agents/: CoT, Executor, Reviewer, Memory, CollabLoop (V5)
   - backends/: LLM Client, Multi-Backend, SmartInit, Fallback
   - main_mod/: AIStaff orchestrator
 
-Removed in V4.1 (moved to deprecated/):
-  - self_improve/, workflow_v2/, skills/, endpoints/, ai_router
+10 providers, OpenAI-compatible, zero config.
 """
 
-__version__ = "4.1.0"
-__author__ = "AI-Team"
+__version__ = "1.0.0"
+__author__ = "LoomLLM Contributors"
 
 # Lazy imports — only load when accessed
 def __getattr__(name):
