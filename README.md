@@ -1,189 +1,121 @@
-# LoomLLM — The Iterative LLM Framework
+# LoomLLM
 
-> Write → Review → Refine → Repeat. Automatically.
-
-**One function call, 10 providers, zero config.**
+> **3 lines. 10 providers. Automatic quality loop.**
 
 ```python
 from ai_staff_v4 import AIStaff
 
-staff = AIStaff.from_env()                          # Auto-detect API keys, zero config
-answer = staff.chat("Write a quicksort")            # Auto-classify → select expert → iterate until quality threshold
-print(f"Score: {answer.quality_score}/100")          # Built-in quality scoring
+staff = AIStaff.from_env()                      # Set one API key, auto-discover everything
+result = staff.chat("Write a quicksort")        # Auto-classify → draft → review → refine
+print(f"Score: {result.quality_score}/100")     # Built-in quality gate
 ```
-
-## Why LoomLLM?
-
-Existing frameworks make you **assemble your own pipeline**. LoomLLM **is** the pipeline.
-
-| | LangChain | CrewAI | **LoomLLM** |
-|---|---|---|---|
-| Setup | Write 50 lines of chain | Configure 4 YAML files | **3 lines of code** |
-| Quality control | Build it yourself | Manual configuration | **Auto-review + rewrite loop** |
-| Multi-model | Single model | Single model | **Fast model writes, strong model reviews** |
-| Cost awareness | ❌ | ❌ | **Real-time token + cost tracking** |
-| Graceful degradation | Write it yourself | ❌ | **Auto-fallback on 429 errors** |
-
-**One-liner positioning**: LangChain = building blocks. CrewAI = assembly line. LoomLLM = autonomous workstation.
 
 ---
 
-## Core Features
+## What makes it different?
 
-### 1. Zero-Config Startup
+**Every LLM framework lets you call an API. LoomLLM makes the output *good*.**
 
-Set **one** environment variable and LoomLLM auto-discovers all available models:
+| | LangChain | CrewAI | AutoGen | **LoomLLM** |
+|---|-----------|--------|---------|-------------|
+| Lines to first result | 50+ | 30+ | 40+ | **3** |
+| Quality gate | Build it | No | No | **Auto review + rewrite** |
+| Cheap model drafts, strong reviews | Manual | No | No | **Built-in** |
+| 429 fallback | Build it | No | No | **Auto** |
+| "Is my answer good?" | You guess | You guess | You guess | **Score out of 100** |
+| Simple Q&A wastes tokens? | Yes | Yes | Yes | **No — auto fast-path** |
+
+### The core idea
+
+```
+1. Classify the task (simple? code? research?)
+2. Pick the cheapest model that can handle it
+3. Draft → Review → Refine until quality passes
+4. Auto-save the result
+```
+
+A simple question like `"1+1=?"` takes **1 API call, 12 tokens**.  
+A code task like `"Write quicksort"` takes **3 calls, ~6K tokens** but scores **92/100**.
+
+No wasted tokens. No manual prompt engineering. No "I hope this is good enough."
+
+---
+
+## Features
+
+### 🎯 Smart Routing — Don't Burn Tokens on Easy Questions
 
 ```python
-# Just set any provider key
-# export GEMINI_API_KEY=your-key     # or DEEPSEEK_API_KEY, OPENAI_API_KEY, etc.
-staff = AIStaff.from_env()
-# → Auto-discovers: gemini-2.5-flash-lite(free), deepseek-chat(cheap)...
+staff.chat("1+1=?")              # → direct: 1 call, 12 tokens
+staff.chat("Write quicksort")    # → code: Coder + Critic loop, 92/100
+staff.chat("AI trend analysis")  # → research: Multi-turn inquiry
+staff.chat("React vs Vue")       # → decision: Multi-dimensional analysis
 ```
 
-`SmartInit` scans environment variables, tests connectivity, lists available models, and configures the best backend — all automatically.
+`TaskClassifier` scores your input against 6 task types, then routes to the cheapest pipeline that can deliver quality. Simple questions skip the review loop entirely.
 
-### 2. Iterative Refinement Loop (V5 CollabLoop)
-
-This is LoomLLM's core innovation. Instead of a single LLM call and hoping for the best:
+### 🔄 V5 CollabLoop — The Quality Engine
 
 ```
-Writer (fast/cheap model) → Reviewer (strong model) → Score < 80? → Rewrite with feedback → Repeat
+Writer (cheap model) → Reviewer (strong model) → Score < 80? → Rewrite with feedback → Repeat
 ```
 
-**How it saves ~50% cost:**
-- The **Writer** uses a fast, cheap model (e.g. `gemini-2.5-flash-lite`, `deepseek-chat`)
-- The **Reviewer** uses a stronger model (e.g. `gemini-3-flash`, `deepseek-reasoner`)
-- Only the review step needs the expensive model — the draft + rewrite use the cheap one
+- **Cost-aware**: Fast/cheap model drafts, strong model only reviews (~50% token savings)
+- **Structured feedback**: Reviewer returns specific issues + suggestions, not vague "make it better"
+- **Debate protocol**: Writer can push back on unfair criticism, preventing over-iteration
+- **Auto-terminate**: Stops when score ≥ threshold, max iterations reached, or no improvement
 
-**Structured feedback, not vague handwaving:**
-```json
-{
-  "score": 72,
-  "issues": ["Missing edge case for empty arrays", "No complexity analysis"],
-  "suggestions": ["Add base case for len(arr) <= 1", "Include Big-O annotation"],
-  "strengths": ["Clean recursion structure", "Good variable naming"]
-}
-```
+### 🔌 10 Providers, Zero Vendor Lock-in
 
-**Debate protocol:** The Writer can argue against the Reviewer's criticism. If the argument is valid, the score adjusts upward. This prevents over-iteration on stylistic preferences.
-
-**Auto-termination:** The loop stops when:
-- Quality score ≥ threshold (default: 80/100)
-- Max iterations reached (default: 3)
-- No meaningful improvement between rounds
-
-### 3. Smart Task Routing
-
-You don't need to pick a mode — LoomLLM auto-classifies your input:
-
-```python
-staff.chat("1+1=?")                # → direct: single call, no loop
-staff.chat("Write quicksort")      # → code: Coder + Critic loop
-staff.chat("AI trend analysis")    # → research: multi-turn inquiry
-staff.chat("React vs Vue")         # → decision: multi-dimensional analysis
-staff.chat("Write a slogan")       # → creative: creative + review
-```
-
-**TaskClassifier** uses the LLM itself to categorize the input, then routes to the optimal pipeline:
-- **direct**: Simple Q&A → 1 API call, no overhead
-- **code**: Programming → Coder writes, Critic reviews, loop until quality met
-- **research**: Open-ended research → Multi-turn follow-up questions to build depth
-- **decision**: Comparative analysis → Multiple perspectives, structured pros/cons
-- **creative**: Creative writing → Writer + Reviewer loop with creative-focused prompts
-
-### 4. 10 Providers, One API
-
-| Provider | Direct Connect | Free Tier | Needs Proxy |
-|----------|---------------|-----------|-------------|
+| Provider | Direct | Free Tier | Proxy |
+|----------|--------|-----------|-------|
 | DeepSeek | ✅ | ❌ | ❌ |
 | Zhipu GLM | ✅ | ✅ glm-4-flash | ❌ |
 | SiliconFlow | ✅ | ✅ Qwen2.5-7B | ❌ |
-| Moonshot (Kimi) | ✅ | ❌ | ❌ |
-| Qwen (DashScope) | ✅ | ❌ | ❌ |
-| Gemini | ❌ | ✅ flash-lite | ✅ |
+| Moonshot | ✅ | ❌ | ❌ |
+| Qwen | ✅ | ✅ | ❌ |
+| Google AI | ❌ | ✅ flash-lite | ✅ |
 | OpenAI | ❌ | ❌ | ✅ |
 | Groq | ❌ | ✅ | ✅ |
 | Anthropic | ❌ | ❌ | ✅ |
 | Ollama | Local | ✅ | ❌ |
 
-**All providers use the OpenAI-compatible API format** (`/v1/chat/completions`). No vendor lock-in, no proprietary APIs. If a provider offers an OpenAI-compatible endpoint, it works with LoomLLM.
+All providers use **OpenAI-compatible format** (`/v1/chat/completions`). No proprietary APIs, no vendor lock-in. If it speaks OpenAI, it works with LoomLLM.
 
-**Provider features:**
-- **Smart proxy detection**: Automatically detects local proxy (Clash/V2Ray) via port scanning
-- **needs_proxy flag**: Chinese providers (DeepSeek, Zhipu, etc.) never get proxy — avoids latency
-- **Model listing**: Gemini supports live model discovery via API; others use curated model lists
-- **Tier classification**: free / cheap / standard / premium — used for cost-aware routing
-
-### 5. Cascade Fallback
-
-When a provider fails (429 quota, 503 overload, network timeout), LoomLLM automatically falls back:
+### 🛡️ Cascade Fallback
 
 ```
-gemini-2.5-flash-lite (429) → gemini-3-flash-preview (503) → deepseek-chat (200 OK)
+Provider A (429) → Provider B (503) → Provider C (200 OK ✓)
 ```
 
-**Fallback strategy:**
-1. Same provider, different model (tier downgrade)
-2. Different provider, similar model (cross-provider)
-3. Stop if all exhausted (report which providers failed)
+When a provider fails (429 quota, 503 overload, timeout), LoomLLM automatically falls back across providers and models.
 
-### 6. Token Budget & Cost Tracking
-
-Real-time cost display on every call:
+### 💰 Token Budget & Cost Tracking
 
 ```
-💰 Budget  gemini-2.5-flash-lite | 1,234 tok | free  ←  Total: 5,678 tokens (3 calls) | 2,345 tok/s | free | 2.4s
+💰 gemini-2.5-flash-lite | 1,234 tok | free | Total: 5,678 tokens (3 calls)
 ```
 
-**Features:**
-- Per-call token counting (prompt + completion)
-- Cost estimation based on model pricing
-- Daily budget limit with warning threshold
-- Accumulated session totals
+Per-call token counting, cost estimation, daily budget limits, session totals.
 
-### 7. Colorized Process Logging
+### 💾 Auto-Save
 
-See exactly what's happening in real-time:
+Every `chat()` call automatically saves output to a timestamped directory:
 
 ```
-🟢 Writer      Started #1
-🔵 Reviewer    Score: 85/100 | 1.2s | 2,345ch
-✅ Done        PASSED (score=85 >= 80)
+ai_staff_code_Write_quicksort_20260425_153000/
+├── solution.py          # The code
+├── report.md            # Quality report
+└── transcript.txt       # Full execution log
 ```
 
-Or when the loop iterates:
+### 🧠 Persistent Memory
 
-```
-🟢 Writer      Started #1
-🔴 Reviewer    Score: 62/100 | Issues: 3 | Suggestions: 2
-🟡 Writer      Rewriting #2 with feedback...
-🔵 Reviewer    Score: 84/100 | 1.1s | 2,890ch
-✅ Done        PASSED (score=84 >= 80) | 2 rounds | 5,135 tokens
-```
-
-### 8. Custom Experts
-
-Edit `experts/experts.yaml` — no code changes needed:
-
-```yaml
-- id: code_reviewer
-  name: Code Reviewer
-  system_prompt: "You are a senior software engineer. Review code for correctness, performance, and readability."
-  temperature: 0.3
-  require_review: false    # Skip the review loop for this expert
-```
-
-**Built-in experts:** generalist, coder, critic, researcher, creative_writer, analyst, reviewer
-
-### 9. Persistent Memory
-
-SQLite-backed conversation history that persists across sessions:
+SQLite-backed conversation history across sessions:
 
 ```python
 staff = AIStaff.from_env(session_id="project-x")
-staff.chat("I'm working on a Flask app")    # Remembered in next session
-staff.chat("Add authentication to my app")  # Knows context from previous chat
+staff.chat("I'm building a Flask app")   # Remembered next session
 ```
 
 ---
@@ -195,59 +127,83 @@ staff.chat("Add authentication to my app")  # Knows context from previous chat
 pip install httpx pyyaml
 ```
 
-### First-Time Setup (Interactive Wizard)
+### Set an API key (any one)
 ```bash
-python -m ai_staff_v4 setup
+# Pick one — all work out of the box
+export DEEPSEEK_API_KEY=your-key       # Best value, direct connect from China
+export ZHIPU_API_KEY=your-key          # Free tier available (glm-4-flash)
+export OPENAI_API_KEY=your-key         # Standard choice
+export GEMINI_API_KEY=your-key         # Free tier available (flash-lite)
 ```
-This launches the setup wizard that:
-- Shows all supported providers (with key registration links)
-- Lets you enter your API key interactively
-- Verifies connectivity immediately
-- Suggests permanent environment variable setup
 
-**Don't have an API key yet?** Pick one:
-| Provider | Get Key | Free Tier? | Proxy Needed? |
-|----------|---------|------------|---------------|
-| DeepSeek | [platform.deepseek.com](https://platform.deepseek.com/api_keys) | ❌ | ❌ |
-| Zhipu GLM | [open.bigmodel.cn](https://open.bigmodel.cn/usercenter/apikeys) | ✅ glm-4-flash | ❌ |
-| Qwen | [dashscope.console.aliyun.com](https://dashscope.console.aliyun.com/apiKey) | ✅ | ❌ |
-| Moonshot | [platform.moonshot.cn](https://platform.moonshot.cn/console/api-keys) | ❌ | ❌ |
-| Gemini | [aistudio.google.com](https://aistudio.google.com/apikey) | ✅ flash-lite | ✅ |
-| OpenAI | [platform.openai.com](https://platform.openai.com/api-keys) | ❌ | ✅ |
+<details>
+<summary>All supported keys</summary>
+
+| Key | Provider | Get Key | Free? |
+|-----|----------|---------|-------|
+| `DEEPSEEK_API_KEY` | DeepSeek | [platform.deepseek.com](https://platform.deepseek.com/api_keys) | ❌ |
+| `ZHIPU_API_KEY` | Zhipu GLM | [open.bigmodel.cn](https://open.bigmodel.cn/usercenter/apikeys) | ✅ |
+| `SILICONFLOW_API_KEY` | SiliconFlow | [cloud.siliconflow.cn](https://cloud.siliconflow.cn/account/ak) | ✅ |
+| `MOONSHOT_API_KEY` | Moonshot | [platform.moonshot.cn](https://platform.moonshot.cn/console/api-keys) | ❌ |
+| `QWEN_API_KEY` | Qwen/DashScope | [dashscope.console.aliyun.com](https://dashscope.console.aliyun.com/apiKey) | ✅ |
+| `GEMINI_API_KEY` | Google AI | [aistudio.google.com](https://aistudio.google.com/apikey) | ✅ |
+| `OPENAI_API_KEY` | OpenAI | [platform.openai.com](https://platform.openai.com/api-keys) | ❌ |
+| `GROQ_API_KEY` | Groq | [console.groq.com](https://console.groq.com/keys) | ✅ |
+| `ANTHROPIC_API_KEY` | Anthropic | [console.anthropic.com](https://console.anthropic.com/) | ❌ |
+
+</details>
 
 ### Run
 ```python
 from ai_staff_v4 import AIStaff
 
-# Option 1: Environment variable (recommended)
-# Set any provider key: GEMINI_API_KEY, DEEPSEEK_API_KEY, OPENAI_API_KEY, etc.
+# Zero-config: detects keys, tests connectivity, picks best model
 staff = AIStaff.from_env()
 
-# Option 2: Direct key
-staff = AIStaff.quick_start("your-api-key", provider="deepseek")  # or "gemini", "openai", "moonshot", ...
-
-# Option 3: YAML config (multi-backend)
-staff = AIStaff.from_config_file("config.yaml")
-
-# Chat
+# That's it. Start chatting.
 answer = staff.chat("Hello")
 ```
 
-### Specify Mode
-```python
-staff.chat("Write quicksort", mode="code")         # Code + review
-staff.chat("AI trend analysis", mode="research")    # Multi-turn research
-staff.chat("React vs Vue", mode="decision")         # Multi-dimensional analysis
-staff.chat("Write a slogan", mode="creative")       # Creative + review
+### Or use the setup wizard
+```bash
+python -m ai_staff_v4 setup
 ```
 
-### Inspect Results
+---
+
+## Usage Patterns
+
+### Simple Q&A — auto fast-path
+```python
+staff.chat("What is asyncio?")      # 1 call, no review, ~100 tokens
+```
+
+### Code with quality gate
 ```python
 result = staff.chat("Write quicksort", mode="code", return_details=True)
-print(f"Quality score: {result.quality_score}/100")
-print(f"Iterations: {result.rounds_used}")
-print(f"Tokens used: {result.total_tokens:,}")
-print(f"Experts involved: {result.experts_used}")
+print(result.quality_score)          # 92/100
+print(result.rounds_used)            # 1 (passed on first review)
+```
+
+### Multi-model arena
+```python
+report = staff.chat("Explain quantum entanglement", mode="arena")
+# 6 models compete, ranked by quality
+```
+
+### Deep research
+```python
+report = staff.chat("Compare asyncio vs threading in Python", mode="research")
+# Multi-turn inquiry with follow-up questions
+```
+
+### Custom experts
+```yaml
+# experts/experts.yaml
+- id: code_reviewer
+  name: Code Reviewer
+  system_prompt: "You are a senior engineer. Review for correctness and performance."
+  temperature: 0.3
 ```
 
 ---
@@ -257,122 +213,42 @@ print(f"Experts involved: {result.experts_used}")
 ```
 User Input → chat()
   │
-  ├─ TaskClassifier (auto-detect task type)
-  │   ├─ direct (simple)  → Single call
-  │   ├─ code (coding)    → Coder + Critic loop
-  │   ├─ research (study) → Multi-turn inquiry
-  │   └─ complex (hard)   → Full V5 collab loop
+  ├─ TaskClassifier
+  │   ├─ direct    → 1 API call (12 tokens for "1+1=?")
+  │   ├─ code      → Coder + Critic loop
+  │   ├─ research  → Multi-turn follow-up inquiry
+  │   ├─ decision  → Multi-perspective analysis
+  │   └─ creative  → Writer + Reviewer loop
   │
-  └─ V5 CollabLoop
-      ├─ Writer (fast model) drafts
-      ├─ Reviewer (strong model) scores & gives feedback
-      ├─ Score < 80? → Writer rewrites with feedback
-      ├─ Debate protocol: Writer can argue back
-      └─ Auto-terminate: Quality met or timeout
+  └─ V5 CollabLoop (for complex tasks)
+      ├─ Writer drafts (fast/cheap model)
+      ├─ Reviewer scores + gives feedback (strong model)
+      ├─ Score < threshold? → Writer rewrites with feedback
+      └─ Auto-terminate when quality passes
 ```
 
 ```
 ai_staff_v4/
-├── core/              # Infrastructure
-│   ├── verbose.py     # Colorized logging + token cost display
-│   ├── budget.py      # Token budget management
-│   ├── events.py      # Event bus (pub/sub)
-│   ├── memory.py      # SQLite persistent memory
-│   ├── constants.py   # Global constants
-│   └── validation.py  # Output validation
-├── experts/           # Expert roles
-│   ├── experts.yaml   # User-editable expert config
-│   ├── registry.py    # Expert registry
-│   └── classifier.py  # Task auto-classification
-├── agents/            # AI sub-agents
-│   ├── collab_loop.py # V5 iterative collaboration engine
-│   ├── cot.py         # Chain-of-thought planner
-│   ├── executor.py    # Execution agent
-│   ├── reviewer.py    # Review agent
-│   ├── memory_agent.py# Memory-aware agent
-│   ├── base.py        # Base agent class
-│   └── types.py       # Shared type definitions
-├── backends/          # LLM backends
-│   ├── client.py      # Unified API client (OpenAI-compatible)
-│   ├── smart_init.py  # Zero-config auto-discovery
-│   ├── multi_client.py# Multi-backend manager
-│   ├── profile.py     # Backend profile dataclass
-│   ├── router.py      # Smart routing
-│   └── fallback.py    # Cascade fallback
-├── main_mod/
-│   ├── staff.py       # AIStaff orchestrator
-│   └── startup.py     # Zero-config startup logic
-├── examples/
-│   ├── simple.py      # 3-line quickstart
-│   ├── research_flow.py # V5 research loop
-│   └── expert_task.py   # Code + review
-├── tests/
-│   └── test_core.py   # Core unit tests
-├── config_template.yaml # Config template (10 providers)
-├── requirements.txt
-├── LICENSE            # MIT
-└── README.md
+├── core/              # Infrastructure (logging, budget, events, memory)
+├── experts/           # Expert roles (YAML-configurable)
+├── agents/            # AI sub-agents (collab loop, reviewer, executor)
+├── backends/          # 10 LLM providers (OpenAI-compatible)
+├── main_mod/          # AIStaff orchestrator
+├── examples/          # Working examples
+└── tests/             # Unit tests (20/20 passing)
 ```
 
 ---
 
-## Configuration
+## Design Philosophy
 
-### Single environment variable (simplest)
-```bash
-# Any one of these works:
-export GEMINI_API_KEY=your-key        # Gemini (free flash-lite)
-export DEEPSEEK_API_KEY=your-key      # DeepSeek (best value)
-export ZHIPU_API_KEY=your-key         # Zhipu GLM (glm-4-flash is free)
-```
+See [DESIGN.md](DESIGN.md) for the full rationale. TL;DR:
 
-### config.yaml (multi-backend)
-Copy `config_template.yaml` and fill in your keys. 10 providers pre-configured — uncomment what you need.
-
-<details>
-<summary>Full config template</summary>
-
-```yaml
-default_model: ""                     # Leave empty = auto-select
-
-settings:
-  proxy: ""                           # Required for overseas providers (Gemini/OpenAI/Groq/Anthropic)
-  default_expert: "generalist"
-  timeout: 120
-  max_retries: 3
-  language: "zh-CN"
-
-profiles:
-  # ── China-direct (no proxy needed) ──
-  deepseek:
-    provider: "deepseek"
-    base_url: "https://api.deepseek.com/v1"
-    api_key: "${DEEPSEEK_API_KEY}"
-    model: "deepseek-chat"
-    tier: "cheap"
-    priority: 9
-
-  # ── Overseas (proxy required) ──
-  gemini_flash:
-    provider: "gemini"
-    base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
-    api_key: "${GEMINI_API_KEY}"
-    model: "gemini-2.5-flash-lite"
-    tier: "free"
-    priority: 10
-
-budget:
-  daily_limit_usd: 1.0
-  warn_threshold: 0.7
-  enable_tracking: true
-
-memory:
-  db_path: ".ai_staff_memory.db"
-  max_history_per_session: 100
-  auto_summarize_every: 20
-```
-
-</details>
+1. **Not everything needs a roundtable** — Simple Q&A should be 1 call, not a 5-agent meeting
+2. **Cost-aware by default** — Cheap model drafts, strong model reviews
+3. **Quality > Speed > Cost** — But never waste tokens on trivial tasks
+4. **Zero config is a feature** — Set one key, get 10 providers
+5. **OpenAI format only** — No vendor lock-in, no proprietary APIs
 
 ---
 
@@ -382,13 +258,8 @@ memory:
 # Unit tests (no API key needed)
 python -m unittest ai_staff_v4.tests.test_core -v
 
-# Quick verify import
+# Quick import check
 python -c "from ai_staff_v4 import AIStaff; print('OK')"
-
-# Run examples (API key required)
-python examples/simple.py
-python examples/research_flow.py
-python examples/expert_task.py
 ```
 
 ---
@@ -401,7 +272,7 @@ python examples/expert_task.py
 
 ---
 
-## Comparison with Alternatives
+## Comparison
 
 | Feature | LoomLLM | LangChain | CrewAI | AutoGen |
 |---------|---------|-----------|--------|---------|
@@ -422,4 +293,4 @@ python examples/expert_task.py
 
 ---
 
-**[中文文档](README_CN.md)**
+**[中文文档](README_CN.md)** | **[设计哲学](DESIGN.md)**
