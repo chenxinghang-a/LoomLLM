@@ -151,7 +151,7 @@ class AIStaff:
         return "\n".join(parts)
     
     def chat(self, user_input: str, mode: str = "auto",
-             return_details: bool = False, **kwargs) -> str | CollaborationResult:
+             return_details: bool = False, auto_save: bool = True, **kwargs) -> str | CollaborationResult:
         """
         统一入口 — 用户只需记住这一个方法。
         
@@ -166,7 +166,8 @@ class AIStaff:
                 - "creative": 创意任务
                 - "collab": 多专家协作
                 - "arena": 跨模型对比
-            return_details: True时返回CollaborationResult（含trace_id/token/评分等），False返回纯文本
+            return_details: True时返回CollaborationResult，False返回纯文本
+            auto_save: True时自动保存输出文件（默认开）
             **kwargs: 传递给底层方法的可选参数
                 - output_dir: 保存目录
                 - max_iterations: V5最大迭代次数
@@ -182,38 +183,35 @@ class AIStaff:
             staff.chat("写个快排", mode="code")        # 代码模式
             staff.chat("AI趋势分析", mode="research")  # 研究模式
         """
+        output_dir = kwargs.get("output_dir", "")
+        
+        # ---- arena 特殊路径 ----
         if mode == "arena":
             questions = kwargs.get("questions", [user_input])
             profiles = kwargs.get("profiles", None)
             arena_report = self.cross_arena(questions, profiles)
-            # 包装成CollaborationResult
-            if return_details:
-                result = CollaborationResult(
-                    goal=user_input, status="success",
-                    strategy_mode="arena", trace_id=f"a_{os.urandom(3).hex()}",
-                    deliverables={"arena_report.md": arena_report},
-                    quality_score=7.0,
-                    rounds_used=1,
-                )
-                return result
-            return arena_report
+            result = CollaborationResult(
+                goal=user_input, status="success",
+                strategy_mode="arena", trace_id=f"a_{os.urandom(3).hex()}",
+                deliverables={"arena_report.md": arena_report},
+                quality_score=7.0, rounds_used=1,
+            )
+            if auto_save:
+                self._auto_save_result(result, output_dir)
+            return result if return_details else arena_report
         
-        if mode != "auto":
-            # 指定模式: 构造一个强制路由，不走分类器
-            result = self._chat_forced_mode(user_input, mode, **kwargs)
-            return result if return_details else self._extract_text(result)
-        
-        # auto模式: 智能路由
-        # 简单问题（direct分类）→ 直接chat_single，不走闭环
+        # ---- 智能路由（auto和指定模式统一） ----
+        # 即使指定mode，也先跑分类器判断复杂度
         classifier = TaskClassifier()
         strategy = classifier.classify(user_input)
         
-        if strategy.mode == "direct" and not strategy.needs_review:
-            # 快速路径：简单问答直接返回，省token省时间
+        # 简单问题快速路径：不管mode是auto还是其他，direct类任务1次LLM搞定
+        is_simple = (strategy.mode == "direct" and not strategy.needs_review) or mode == "direct"
+        
+        if is_simple:
             try:
                 output, stats = self.chat_single(user_input)
             except RuntimeError as e:
-                # 429/网络错误：尝试multi_llm fallback
                 output, stats = self._fallback_chat(user_input, str(e))
             result = CollaborationResult(
                 goal=user_input, status="success",
@@ -225,15 +223,26 @@ class AIStaff:
                 total_tokens=stats.get("total_tokens", 0),
                 experts_used=[strategy.primary_expert],
             )
+            if auto_save:
+                self._auto_save_result(result, output_dir)
             return result if return_details else output
         
-        # 复杂任务 → V5闭环协作
+        # ---- 复杂任务 ----
+        if mode != "auto":
+            # 指定模式走forced path（但已经过了简单问题快速路径）
+            result = self._chat_forced_mode(user_input, mode, **kwargs)
+            if auto_save:
+                self._auto_save_result(result, output_dir)
+            return result if return_details else self._extract_text(result)
+        
+        # auto模式: V5闭环协作
         result = self.auto_run_v5(
             user_input,
-            output_dir=kwargs.get("output_dir", ""),
+            output_dir=output_dir,
             max_iterations=kwargs.get("max_iterations", 0),
             quality_threshold=kwargs.get("quality_threshold", 80),
         )
+        # auto_run_v5内部已保存，不重复存
         
         # 更新对话历史
         self.messages.append({"role": "user", "content": user_input})
@@ -282,6 +291,21 @@ class AIStaff:
                     return result.deliverables[key]
             return list(result.deliverables.values())[0]
         return result.transcript or "[No output]"
+    
+    def _auto_save_result(self, result: CollaborationResult, output_dir: str = "") -> list[str]:
+        """自动保存CollaborationResult到文件，返回保存的文件列表"""
+        if not output_dir:
+            safe_name = re.sub(r'[\\/:*?"<>|]', '_', result.goal[:30])
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            mode_tag = result.strategy_mode or "auto"
+            output_dir = os.path.join(os.getcwd(), f'ai_staff_{mode_tag}_{safe_name}_{timestamp}')
+        try:
+            saved = result.save(output_dir)
+            log.success(f"💾 已保存到: {output_dir}/ ({len(saved)}个文件)")
+            return saved
+        except Exception as e:
+            log.warn(f"Auto-save failed: {e}")
+            return []
     
     def _chat_forced_mode(self, user_input: str, mode: str, **kwargs) -> CollaborationResult:
         """强制模式: 跳过分类器，直接路由到指定执行路径，返回CollaborationResult"""
