@@ -295,7 +295,7 @@ class AIStaff:
     def _auto_save_result(self, result: CollaborationResult, output_dir: str = "") -> list[str]:
         """自动保存CollaborationResult到文件，返回保存的文件列表"""
         if not output_dir:
-            safe_name = re.sub(r'[\\/:*?"<>|]', '_', result.goal[:30])
+            safe_name = re.sub(r'[\\/:*?"<>|\n\r]', '_', result.goal[:30])
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             mode_tag = result.strategy_mode or "auto"
             output_dir = os.path.join(os.getcwd(), f'ai_staff_{mode_tag}_{safe_name}_{timestamp}')
@@ -785,7 +785,7 @@ class AIStaff:
         
         # Auto-save if output_dir specified or generate default
         if not output_dir:
-            safe_name = re.sub(r'[\\/:*?"<>|]', '_', user_input[:30])
+            safe_name = re.sub(r'[\\/:*?"<>|\n\r]', '_', user_input[:30])
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             output_dir = os.path.join(os.getcwd(), f'ai_staff_output_{safe_name}_{timestamp}')
         
@@ -1580,7 +1580,7 @@ staff = AIStaff.from_config_file("config.yaml")
         
         # 自动保存
         if not output_dir:
-            safe_name = re.sub(r'[\\/:*?"<>|]', '_', user_input[:30])
+            safe_name = re.sub(r'[\\/:*?"<>|\n\r]', '_', user_input[:30])
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             output_dir = os.path.join(os.getcwd(), f'ai_staff_v5_{safe_name}_{timestamp}')
         
